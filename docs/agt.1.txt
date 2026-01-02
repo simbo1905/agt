@@ -1,0 +1,291 @@
+AGT(1)                           User Commands                          AGT(1)
+
+NAME
+       agt - Agent Git Tool for immutable filesystem snapshots and session management
+
+SYNOPSIS
+       agt <command> [options]
+       git [--disable-agt] <command> [options]
+
+DESCRIPTION
+       agt is a Git wrapper built on gitoxide that provides dual-mode operation for
+       managing AI agent coding sessions with immutable filesystem snapshots and
+       time-travel capabilities.
+
+       When invoked as 'git', agt behaves like standard Git but filters out agent
+       branches, tags, and commits based on configuration. When invoked as 'agt',
+       all branches and commits are visible, and additional agent management
+       commands are available.
+
+       The tool enables parallel agent workflows where multiple AI agents can work
+       concurrently in isolated worktrees while maintaining a complete, immutable
+       history of all file modifications. Agent branches are kept local and never
+       pushed to remotes, while user branches follow standard Git workflows.
+
+DUAL-MODE OPERATION
+       git mode (filtered)
+              When the binary is invoked as 'git' (via symlink or rename), it
+              operates as a drop-in Git replacement with the following filtering:
+
+              • Branches matching the configured prefix are hidden from output
+              • Tags matching the configured prefix are hidden from output
+              • Commits authored by the agent email are hidden from logs
+              • All standard Git commands work normally with filtered output
+
+       agt mode (unfiltered)
+              When invoked as 'agt', no filtering is applied and additional
+              commands are available for agent session management.
+
+CONFIGURATION
+       agt uses Git configuration files (global ~/.gitconfig or local .git/config)
+       with the following settings:
+
+       agt.agentEmail
+              Email address used for auto-commit operations. Commits by this
+              author are filtered in git mode. Example: agt.opencode@local
+
+       agt.branchPrefix
+              Prefix for agent session branches. Branches and tags matching this
+              prefix are filtered in git mode. Example: agtsessions/
+
+       agt.userEmail
+              The user's normal email for reference. Used to identify non-agent
+              commits.
+
+       Example configuration:
+              [agt]
+                  agentEmail = agt.opencode@local
+                  branchPrefix = agtsessions/
+                  userEmail = simon@example.com
+
+COMMANDS
+   AGT-SPECIFIC COMMANDS (agt mode only)
+
+       agt init <remote-url> [--path <directory>]
+              Initialize a new agt-managed repository. This command:
+
+              1. Clones <remote-url> as a bare repository (<name>.git)
+              2. Creates an adjacent main checkout directory (<name>)
+              3. Configures the worktree to use the bare repo
+              4. Sets up default agt configuration
+              5. Creates the agt state directory (.git/agt/)
+
+              Options:
+                  --path <directory>    Target directory (default: current dir)
+
+       agt fork --session-id <id> [-C <path>] [--from <branch|session>]
+              Create a new agent session with its own worktree and branch.
+
+              1. Creates branch agtsessions/<id> from specified starting point
+              2. Creates worktree at sessions/<id>/
+              3. Initializes timestamp tracking for auto-commits
+              4. Sets up session metadata
+
+              Options:
+                  --session-id <id>     Unique identifier for the session (required)
+                  -C <path>             Repository path (default: current dir)
+                  --from <ref>          Starting point: branch name, commit, or
+                                        existing session ID (default: HEAD)
+
+       agt autocommit -C <path> --session-id <id> [--timestamp <epoch>]
+              Auto-commit all modified files to the agent session branch.
+
+              This command:
+              1. Reads last autocommit timestamp from .git/agt/timestamps/<id>
+              2. Scans <path> for files with mtime >= last timestamp
+              3. Creates a tree object from all modified files (ignores .gitignore)
+              4. Creates a commit on agtsessions/<id> with:
+                 - Parent 1: last commit on agtsessions/<id>
+                 - Parent 2: current HEAD of the worktree's tracked branch
+              5. Updates the timestamp file
+
+              Options:
+                  -C <path>             Worktree path (required)
+                  --session-id <id>     Session identifier (required)
+                  --timestamp <epoch>   Override scan timestamp (for testing)
+                  --dry-run             Show what would be committed without committing
+
+       agt list-sessions [-C <path>]
+              List all agent sessions with their status.
+
+              Output includes:
+              • Session ID
+              • Branch name
+              • Worktree path
+              • Last commit timestamp
+              • Number of commits
+
+       agt prune-session --session-id <id> [-C <path>]
+              Remove an agent session's worktree and optionally its branch.
+
+              Options:
+                  --session-id <id>     Session to prune (required)
+                  -C <path>             Repository path
+                  --delete-branch       Also delete the session branch
+
+       agt status [-C <path>]
+              Show agt-specific status including:
+              • Active sessions
+              • Pending autocommits
+              • Configuration summary
+
+   GIT COMMANDS (both modes)
+
+       All standard Git commands are supported. In git mode, output is filtered
+       according to agt configuration. Examples:
+
+       git branch
+              Lists branches, excluding those matching agt.branchPrefix in git mode.
+
+       git log
+              Shows commit history, excluding commits by agt.agentEmail in git mode.
+
+       git tag
+              Lists tags, excluding those matching agt.branchPrefix in git mode.
+
+OPTIONS
+   GLOBAL OPTIONS
+
+       --disable-agt
+              When invoked as 'git', disable all agt filtering. Useful for
+              debugging or when full visibility is needed without switching
+              to agt mode.
+
+       -C <path>
+              Run as if git was started in <path> instead of current directory.
+              Supported by both git and agt commands.
+
+       --version
+              Print version information.
+
+       --help
+              Print help for the command.
+
+FILES
+       ~/.gitconfig
+              Global Git configuration. Can contain [agt] section.
+
+       .git/config
+              Local repository configuration. Can override global [agt] settings.
+
+       .git/agt/
+              AGT state directory containing:
+
+              timestamps/<session-id>
+                     Last autocommit timestamp for each session (Unix epoch).
+
+              sessions/<session-id>.json
+                     Session metadata including parent session, creation time,
+                     and worktree path.
+
+       sessions/<session-id>/
+              Default location for agent session worktrees.
+
+ENVIRONMENT
+       AGT_DISABLE_FILTER
+              If set to "1", disables filtering even in git mode. Equivalent
+              to --disable-agt flag.
+
+       AGT_DEBUG
+              If set to "1", enables debug output showing filtering decisions.
+
+EXAMPLES
+       Initialize a new agt-managed repository:
+              $ agt init https://github.com/user/project.git
+              $ cd project
+
+       Configure agt settings:
+              $ git config agt.agentEmail "agt.opencode@local"
+              $ git config agt.branchPrefix "agtsessions/"
+
+       Start a new agent session:
+              $ agt fork --session-id agent-001
+
+       Work in the agent session (agent does its work):
+              $ cd sessions/agent-001
+              $ # ... agent modifies files ...
+
+       Auto-commit agent changes:
+              $ agt autocommit -C sessions/agent-001 --session-id agent-001
+
+       Fork a new session from an existing one:
+              $ agt fork --session-id agent-002 --from agent-001
+
+       View all branches (including agent branches):
+              $ agt branch -a
+
+       View filtered branches (user branches only):
+              $ git branch -a
+
+       Roll back an agent session by 3 commits:
+              $ cd sessions/agent-001
+              $ git reset --hard HEAD~3
+
+       Debug filtering issues:
+              $ git --disable-agt branch -a
+
+SANDBOXING ARCHITECTURE
+       agt is designed to work in conjunction with bubblewrap (bwrap) to provide
+       secure isolation for agent sessions.
+
+       The Sandbox Model:
+              1.  Each agent session runs in a dedicated directory (worktree).
+              2.  The session is jailed using 'bwrap', restricting access to the
+                  host filesystem.
+              3.  The 'agt' binary is bind-mounted into the jail as '/usr/bin/git'.
+              4.  The jail contains a symlink or bind-mount of the .git directory
+                  filtered by agt.
+
+       Dual-Role Security:
+              Inside the jail (invoked as 'git'):
+                     The agent sees a "normal" Git environment but is restricted
+                     to user-land branches. It cannot see or modify the immutable
+                     history of other agents or the agent's own checkpoint history.
+
+              Outside the jail (invoked as 'agt'):
+                     The process manager (Agent Spawner) has full visibility. It
+                     executes 'agt autocommit' to capture the full state of the
+                     jail, including ignored files, into the immutable history.
+
+ARCHITECTURE
+       Repository Layout:
+              project.git/           # Bare repository (object store)
+              project/               # Main user worktree
+              ├── .git               # File pointing to ../project.git
+              └── sessions/          # Agent worktrees
+                  ├── agent-001/
+                  │   └── .git       # File pointing to ../../project.git
+                  └── agent-002/
+                      └── .git
+
+       Commit Graph:
+              User commits and agent commits share the same object store.
+              Agent autocommits have two parents:
+              - First parent: previous agent commit (linear agent history)
+              - Second parent: user branch HEAD (linking to user timeline)
+
+              This enables:
+              • Full time-travel to any agent state
+              • Forking from any point in agent history
+              • Rolling back agent changes without affecting user branches
+              • Comparing agent work against user branch state
+
+EXIT STATUS
+       0      Success
+
+       1      General error
+
+       2      Invalid command or options
+
+       128    Git operation failed
+
+SEE ALSO
+       git(1), git-worktree(1), gitoxide documentation
+
+BUGS
+       Report bugs at: https://github.com/user/agt/issues
+
+AUTHOR
+       Written for AI agent session management and immutable filesystem workflows.
+
+AGT 0.1.0                         January 2026                          AGT(1)

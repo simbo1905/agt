@@ -1,0 +1,27 @@
+[package]
+name = "agt"
+version = "0.1.0"
+edition = "2021"
+authors = ["AI Coding Agent"]
+license = "MIT"
+description = "Agent Git Tool for AI agent session management"
+
+[dependencies]
+gix = { workspace = true }
+clap = { workspace = true }
+jwalk = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "agt"
+path = "src/main.rs"

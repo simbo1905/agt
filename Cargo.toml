@@ -1,0 +1,35 @@
+[workspace]
+members = ["crates/agt"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+authors = ["AI Coding Agent"]
+license = "MIT"
+
+[workspace.dependencies]
+gix = { version = "0.68", features = ["blocking-network-client"] }
+clap = { version = "4", features = ["derive"] }
+jwalk = "0.8"
+chrono = "0.4"
+anyhow = "1"
+thiserror = "1"
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+# Pedantic lints - allow some that are too strict
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+# Allow some casts that are reasonable
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
