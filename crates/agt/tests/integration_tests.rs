@@ -397,6 +397,37 @@ fn test_git_mode_filters_branches() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn test_git_mode_add_and_commit() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_basic_repo()?;
+    let worktree = repo.worktree();
+
+    fs::write(worktree.join("git-add.txt"), "hello")?;
+
+    git_mode_cmd(repo.tmp())?
+        .args(["add", "git-add.txt"])
+        .env("AGT_GIX_PATH", ensure_gix()?)
+        .current_dir(worktree)
+        .assert()
+        .success();
+
+    git_mode_cmd(repo.tmp())?
+        .args(["commit", "-m", "add via git mode"])
+        .env("AGT_GIX_PATH", ensure_gix()?)
+        .current_dir(worktree)
+        .assert()
+        .success();
+
+    let repo = gix::open(worktree)?;
+    let mut branch_ref = repo.find_reference("refs/heads/main")?;
+    let commit = branch_ref.peel_to_commit()?;
+    let tree = commit.tree()?;
+    let entry = tree.lookup_entry_by_path(std::path::Path::new("git-add.txt"))?;
+    assert!(entry.is_some());
+
+    Ok(())
+}
+
+#[test]
 fn test_agt_mode_shows_all_branches() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_agent_branch()?;
 
