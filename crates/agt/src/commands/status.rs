@@ -13,9 +13,12 @@ pub fn run(repo: &Repository, config: &AgtConfig) -> Result<()> {
     }
 
     // Count active sessions
-    let sessions_dir = repo.git_dir().join("agt/sessions");
+    let sessions_dir = repo.common_dir().join("agt/sessions");
     let session_count = if sessions_dir.exists() {
-        fs::read_dir(&sessions_dir)?.count()
+        fs::read_dir(&sessions_dir)?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".json"))
+            .count()
     } else {
         0
     };
@@ -23,7 +26,7 @@ pub fn run(repo: &Repository, config: &AgtConfig) -> Result<()> {
     println!("  Active Sessions: {session_count}");
 
     // Check for pending autocommits
-    let timestamps_dir = repo.git_dir().join("agt/timestamps");
+    let timestamps_dir = repo.common_dir().join("agt/timestamps");
     if timestamps_dir.exists() {
         let mut pending = 0;
         for entry in fs::read_dir(&timestamps_dir)? {

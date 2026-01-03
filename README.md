@@ -8,7 +8,7 @@ This repository contains tools for managing AI agent coding sessions with immuta
 
 - **Parallel agent workflows** - Multiple AI agents work concurrently in isolated worktrees
 - **Immutable history** - Every file modification is captured in the Git object store
-- **Sandboxing** - Designed for use with `bubblewrap` (bwrap) to jail agent processes
+- **Sandboxing** - Designed to be compatible with sandboxing tools (e.g.  `bubblewrap` (bwrap) to jail agent processes)
 - **Time travel** - Roll back to any point in agent history, fork from any state
 - **Transparent user experience** - When invoked as `git`, agent branches are hidden
 

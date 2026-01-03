@@ -1,10 +1,30 @@
 use assert_cmd::Command as AgtCommand;
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 
+fn agt_bin() -> PathBuf {
+    assert_cmd::cargo::cargo_bin!("agt").to_path_buf()
+}
+
 fn agt_cmd() -> AgtCommand {
-    assert_cmd::cargo::cargo_bin_cmd!("agt")
+    AgtCommand::new(agt_bin())
+}
+
+fn git_mode_cmd(tmp: &TempDir) -> Result<AgtCommand, Box<dyn std::error::Error>> {
+    let git_path = tmp.path().join("git");
+    if !git_path.exists() {
+        fs::copy(agt_bin(), &git_path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&git_path)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&git_path, perms)?;
+        }
+    }
+    Ok(AgtCommand::new(git_path))
 }
 
 #[test]
@@ -74,6 +94,10 @@ fn test_fork_creates_branch_and_worktree() -> Result<(), Box<dyn std::error::Err
     let timestamp_file = tmp.path().join(".git/agt/timestamps/test-session");
     assert!(timestamp_file.exists());
 
+    // Verify session metadata exists
+    let session_file = tmp.path().join(".git/agt/sessions/test-session.json");
+    assert!(session_file.exists());
+
     Ok(())
 }
 
@@ -105,6 +129,16 @@ fn test_autocommit_with_timestamp_override() -> Result<(), Box<dyn std::error::E
         .assert()
         .success();
 
+    // Verify commit has two parents and contains the file
+    let repo = gix::open(tmp.path())?;
+    let mut branch_ref = repo.find_reference("refs/heads/agtsessions/test-session")?;
+    let commit = branch_ref.peel_to_commit()?;
+    assert_eq!(commit.parent_ids().count(), 2);
+
+    let tree = commit.tree()?;
+    let entry = tree.lookup_entry_by_path(std::path::Path::new("test.txt"))?;
+    assert!(entry.is_some());
+
     Ok(())
 }
 
@@ -113,7 +147,7 @@ fn test_git_mode_filters_branches() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = setup_repo_with_agent_branch()?;
 
     // Test git branch command (should filter agent branches)
-    let output = agt_cmd()
+    let output = git_mode_cmd(&tmp)?
         .args(["branch"])
         .current_dir(tmp.path())
         .output()?;

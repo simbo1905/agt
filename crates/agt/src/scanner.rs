@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -8,6 +9,11 @@ pub fn scan_modified_files(root: &Path, since_timestamp: i64) -> Result<Vec<Path
 
     for entry in jwalk::WalkDir::new(root)
         .skip_hidden(false)
+        .process_read_dir(|_depth, _path, _state, children| {
+            children.retain(|entry| {
+                entry.as_ref().map_or(true, |dir_entry| dir_entry.file_name != OsStr::new(".git"))
+            });
+        })
         .into_iter()
         .filter_map(std::result::Result::ok)
     {

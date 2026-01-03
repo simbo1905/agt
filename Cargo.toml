@@ -9,7 +9,7 @@ authors = ["AI Coding Agent"]
 license = "MIT"
 
 [workspace.dependencies]
-gix = { version = "0.68", features = ["blocking-network-client"] }
+gix = { version = "0.68", features = ["blocking-network-client", "tree-editor"] }
 clap = { version = "4", features = ["derive"] }
 jwalk = "0.8"
 chrono = "0.4"

@@ -20,8 +20,17 @@ pub fn run(
         .join(session_id);
 
     if worktree_path.exists() {
-        fs::remove_dir_all(&worktree_path)
-            .with_context(|| format!("Failed to remove worktree: {}", worktree_path.display()))?;
+        let status = StdCommand::new("git")
+            .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
+            .current_dir(repo.work_dir().unwrap())
+            .status()
+            .context("Failed to remove worktree")?;
+        if !status.success() {
+            return Err(anyhow::anyhow!(
+                "git worktree remove failed for {}",
+                worktree_path.display()
+            ));
+        }
         println!("Removed worktree: {}", worktree_path.display());
     }
 
@@ -38,7 +47,7 @@ pub fn run(
     }
 
     // 3. Remove timestamp file
-    let timestamp_file = repo.git_dir().join("agt/timestamps").join(session_id);
+    let timestamp_file = repo.common_dir().join("agt/timestamps").join(session_id);
     if timestamp_file.exists() {
         fs::remove_file(&timestamp_file)?;
         println!("Removed timestamp file");
@@ -46,7 +55,7 @@ pub fn run(
 
     // 4. Remove session metadata
     let session_file = repo
-        .git_dir()
+        .common_dir()
         .join("agt/sessions")
         .join(format!("{session_id}.json"));
     if session_file.exists() {

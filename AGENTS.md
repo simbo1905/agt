@@ -60,13 +60,13 @@ Read from git config files (global `~/.gitconfig` or local `.git/config`):
 
 Use gitoxide's config APIs to read these.
 
-### Sandboxing Strategy
+### Sandboxing Strategy (Optional)
 
-Agents operate within **bubblewrap (bwrap)** jails for isolation:
+Rather than total security, we would like to provide guardrails, like with tools like **bubblewrap (bwrap)** or other OS level tools where available (e.g. `sandbox-exec` is deprecated on Apple but they have `chroot` for isolation):
 
 1.  **Agent Spawner**: A process manager running on the host.
     - Creates the session worktree (`agt fork`).
-    - Configures the `bwrap` jail.
+    - Configures the `bwrap`/`chroot` jail.
     - Bind-mounts `agt` as `/usr/bin/git` inside the jail.
 2.  **Inside the Jail**:
     - The agent sees `argv[0] == "git"`.
@@ -75,6 +75,8 @@ Agents operate within **bubblewrap (bwrap)** jails for isolation:
 3.  **Outside the Jail**:
     - The spawner runs `agt autocommit` to checkpoint the session.
     - `agt` (full mode) captures all files, bypassing `.gitignore`.
+
+We want to make the actual jail script extendable (perhaps by having `git` run `agt jail` by finding an `agt-jail` on the path to invoke it). 
 
 ### Filtering Logic (git mode)
 
@@ -89,19 +91,19 @@ When output would show branches, tags, or commits:
 1. Clone remote as bare repo: `<name>.git`
 2. Create adjacent worktree: `<name>/`
 3. The worktree's `.git` is a file pointing to `../<name>.git`
-4. Initialize `.git/agt/` directory structure
+4. Initialise `.git/agt/` directory structure
 5. See: https://gist.github.com/simbo1905/22accc8dc39583672aa6f0483a800429
 
 **`agt fork --session-id <id>`**
 1. Create branch `agtsessions/<id>` from current HEAD (or `--from`)
 2. Create worktree at `sessions/<id>/`
-3. Initialize timestamp file at `.git/agt/timestamps/<id>`
+3. Initialise timestamp file at `.git/agt/timestamps/<id>`
 
 **`agt autocommit -C <path> --session-id <id>`**
 1. Read last timestamp from `.git/agt/timestamps/<id>`
 2. Scan `<path>` for files with mtime >= timestamp (use jwalk or similar)
 3. Build tree object from found files (ignore .gitignore)
-4. Create commit on `agtsessions/<id>` with:
+4. Create a commit on `agtsessions/<id>` with:
    - Parent 1: tip of `agtsessions/<id>`
    - Parent 2: HEAD of worktree's tracked branch
 5. Update timestamp file
@@ -109,9 +111,22 @@ When output would show branches, tags, or commits:
 ### Testing Requirements
 
 - Create temporary bare repos for testing
-- Test filtering by creating commits with agent email
+- Test filtering by creating commits with the agent email
 - Test autocommit with controllable timestamps (`--timestamp` flag)
 - Integration tests that exercise full workflows
+
+### Exploratory Test Suites
+
+The `tests/exploratory/` directory contains 9 core test suites designed for parallel execution by AI agents. Key requirements:
+1. **Isolation**: Each suite runs in `.tmp/suiteN` with a dedicated git config (see `ORCHESTRATION.md`).
+2. **Determinism**: Use `--timestamp` for autocommit tests to override mtime.
+3. **Documentation as Spec**: **Suite 9** verifies every claim in `docs/agt.1.txt`. Mismatches are bugs.
+4. **Critical Path**: Suites 1, 2, 6, and 9 must pass before others run.
+
+Agents should:
+- Run `setup.sh` before starting a suite.
+- Use `check.sh` to validate pass/fail criteria.
+- Report mismatches between tool behavior and `docs/agt.1.txt` in **Suite 9**.
 
 ## Dependencies
 

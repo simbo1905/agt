@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 
 pub fn run(repo: &Repository, config: &AgtConfig) -> Result<()> {
-    let sessions_dir = repo.git_dir().join("agt/sessions");
+    let sessions_dir = repo.common_dir().join("agt/sessions");
 
     if !sessions_dir.exists() {
         println!("No agent sessions found");
@@ -16,11 +16,18 @@ pub fn run(repo: &Repository, config: &AgtConfig) -> Result<()> {
 
     for entry in fs::read_dir(&sessions_dir)? {
         let entry = entry?;
-        let session_id = entry.file_name().to_string_lossy().to_string();
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if !file_name.ends_with(".json") {
+            continue;
+        }
+        let session_id = file_name.trim_end_matches(".json").to_string();
 
         let branch_name = format!("{}{}", config.branch_prefix, session_id);
         let worktree_path = repo
-            .work_dir().map_or_else(|| Path::new("<unknown>").to_path_buf(), |wd| wd.join("sessions").join(&session_id));
+            .work_dir()
+            .map_or_else(|| Path::new("<unknown>").to_path_buf(), |wd| {
+                wd.join("sessions").join(&session_id)
+            });
 
         sessions.push((session_id, branch_name, worktree_path));
     }
