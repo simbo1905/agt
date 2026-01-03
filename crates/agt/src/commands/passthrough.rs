@@ -1,3 +1,4 @@
+use crate::commands::git_porcelain;
 use crate::config::AgtConfig;
 use crate::gix_cli::{find_gix_binary, repo_base_path};
 use anyhow::Result;
@@ -23,6 +24,10 @@ pub fn run(
     let is_git_mode = _is_git_mode;
     if is_git_mode && args.first().map(String::as_str) == Some("worktree") {
         anyhow::bail!("worktree operations are disabled in git mode");
+    }
+
+    if is_git_mode && git_porcelain::maybe_handle_git_command(args, repo)? {
+        return Ok(());
     }
 
     if is_git_mode && !disable_filter && args.first().map(String::as_str) == Some("log") {

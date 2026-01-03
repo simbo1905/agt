@@ -49,3 +49,14 @@
 2026/01/03 04:27:04 [info] 96852#11976614: *16 kevent() reported that client 127.0.0.1 closed keepalive connection
 2026/01/03 04:27:04 [info] 96852#11976614: *18 kevent() reported that client 127.0.0.1 closed keepalive connection
 2026/01/03 04:27:04 [info] 96852#11976614: *19 kevent() reported that client 127.0.0.1 closed keepalive connection
+2026/01/03 17:14:01 [emerg] 47316#14899768: bind() to 0.0.0.0:8080 failed (48: Address already in use)
+2026/01/03 17:14:01 [notice] 47316#14899768: try again to bind() after 500ms
+2026/01/03 17:14:01 [emerg] 47316#14899768: bind() to 0.0.0.0:8080 failed (48: Address already in use)
+2026/01/03 17:14:01 [notice] 47316#14899768: try again to bind() after 500ms
+2026/01/03 17:14:01 [emerg] 47316#14899768: bind() to 0.0.0.0:8080 failed (48: Address already in use)
+2026/01/03 17:14:01 [notice] 47316#14899768: try again to bind() after 500ms
+2026/01/03 17:14:01 [emerg] 47316#14899768: bind() to 0.0.0.0:8080 failed (48: Address already in use)
+2026/01/03 17:14:01 [notice] 47316#14899768: try again to bind() after 500ms
+2026/01/03 17:14:01 [emerg] 47316#14899768: bind() to 0.0.0.0:8080 failed (48: Address already in use)
+2026/01/03 17:14:01 [notice] 47316#14899768: try again to bind() after 500ms
+2026/01/03 17:14:01 [emerg] 47316#14899768: still could not bind()

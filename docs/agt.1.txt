@@ -148,6 +148,8 @@ COMMANDS
               • `git worktree` is disabled in git mode
               • `git log` filtering only works with the default log format; custom
                 `--oneline`/`--pretty`/`--format` requires `--disable-agt`
+              • `git commit` supports `-m/--message` only (no editor integration)
+              • `git add` supports explicit paths plus `-A/--all` and `-u/--update`
 
        Examples:
 

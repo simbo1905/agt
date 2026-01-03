@@ -50,7 +50,15 @@ Test that basic repo discovery and status works:
 
 Success: `git status` works as expected
 
-### Scenario 1.2: Log / Branch / Tag Listing
+### Scenario 1.2: Basic Add + Commit
+
+- Create a file
+- Stage it (`git add <file>`)
+- Commit it (`git commit -m "message"`)
+
+Success: Commit exists and contains the file
+
+### Scenario 1.3: Log / Branch / Tag Listing
 
 - View the log (`git log`)
 - List branches (`git branch`)
@@ -58,7 +66,7 @@ Success: `git status` works as expected
 
 Success: Commands run successfully
 
-### Scenario 1.3: Clone / Fetch (Local)
+### Scenario 1.4: Clone / Fetch (Local)
 
 - Create a local bare repo as a "remote"
 - Run `git clone` from it (via gix passthrough)
