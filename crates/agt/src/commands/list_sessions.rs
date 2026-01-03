@@ -23,11 +23,10 @@ pub fn run(repo: &Repository, config: &AgtConfig) -> Result<()> {
         let session_id = file_name.trim_end_matches(".json").to_string();
 
         let branch_name = format!("{}{}", config.branch_prefix, session_id);
-        let worktree_path = repo
-            .work_dir()
-            .map_or_else(|| Path::new("<unknown>").to_path_buf(), |wd| {
-                wd.join("sessions").join(&session_id)
-            });
+        let worktree_path = repo.work_dir().map_or_else(
+            || Path::new("<unknown>").to_path_buf(),
+            |wd| wd.join("sessions").join(&session_id),
+        );
 
         sessions.push((session_id, branch_name, worktree_path));
     }

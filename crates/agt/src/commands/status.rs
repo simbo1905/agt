@@ -34,11 +34,12 @@ pub fn run(repo: &Repository, config: &AgtConfig) -> Result<()> {
             let session_id = entry.file_name().to_string_lossy().to_string();
             let timestamp_file = entry.path();
 
-            let last_timestamp: i64 = fs::read_to_string(&timestamp_file)?.trim().parse()?;
+            let last_timestamp: u64 = fs::read_to_string(&timestamp_file)?.trim().parse()?;
 
             // Check if there are files modified since last autocommit
-            let worktree_path = repo
-                .work_dir().map_or_else(std::path::PathBuf::new, |wd| wd.join("sessions").join(&session_id));
+            let worktree_path = repo.work_dir().map_or_else(std::path::PathBuf::new, |wd| {
+                wd.join("sessions").join(&session_id)
+            });
 
             if worktree_path.exists() {
                 let modified_files =

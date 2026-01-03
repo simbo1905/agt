@@ -1,0 +1,51 @@
+2026/01/03 04:22:11 [notice] 95371#11951083: using the "kqueue" event method
+2026/01/03 04:22:11 [notice] 95371#11951083: openresty/1.27.1.2
+2026/01/03 04:22:11 [notice] 95371#11951083: built by clang 17.0.0 (clang-1700.4.4.1)
+2026/01/03 04:22:11 [notice] 95371#11951083: OS: Darwin 25.1.0
+2026/01/03 04:22:11 [notice] 95371#11951083: hw.ncpu: 10
+2026/01/03 04:22:11 [notice] 95371#11951083: net.inet.tcp.sendspace: 131072
+2026/01/03 04:22:11 [notice] 95371#11951083: kern.ipc.somaxconn: 128
+2026/01/03 04:22:11 [notice] 95371#11951083: hw.cachelinesize: 128
+2026/01/03 04:22:11 [notice] 95371#11951083: getrlimit(RLIMIT_NOFILE): 1048575:9223372036854775807
+2026/01/03 04:22:11 [notice] 95387#11951209: start worker processes
+2026/01/03 04:22:11 [notice] 95387#11951209: start worker process 95388
+2026/01/03 04:22:12 [info] 95388#11951210: *1 kevent() reported that client 127.0.0.1 closed keepalive connection
+2026/01/03 04:22:21 [info] 95388#11951210: *2 kevent() reported that client 127.0.0.1 closed keepalive connection
+2026/01/03 04:22:21 [info] 95388#11951210: *4 kevent() reported that client 127.0.0.1 closed keepalive connection
+2026/01/03 04:22:56 [info] 95388#11951210: *6 kevent() reported that client 127.0.0.1 closed keepalive connection
+2026/01/03 04:22:56 [info] 95388#11951210: *8 kevent() reported that client 127.0.0.1 closed keepalive connection
+2026/01/03 04:23:06 [notice] 95387#11951209: signal 1 (SIGHUP) received from 96017, reconfiguring
+2026/01/03 04:23:06 [notice] 95387#11951209: reconfiguring
+2026/01/03 04:23:06 [notice] 95387#11951209: using the "kqueue" event method
+2026/01/03 04:23:06 [notice] 95387#11951209: start worker processes
+2026/01/03 04:23:06 [notice] 95387#11951209: start worker process 96019
+2026/01/03 04:23:07 [notice] 95387#11951209: signal 23 (SIGIO) received
+2026/01/03 04:23:07 [notice] 95388#11951210: gracefully shutting down
+2026/01/03 04:23:07 [notice] 95387#11951209: signal 23 (SIGIO) received
+2026/01/03 04:23:07 [notice] 95388#11951210: exiting
+2026/01/03 04:23:07 [notice] 95388#11951210: exit
+2026/01/03 04:23:07 [notice] 95387#11951209: signal 20 (SIGCHLD) received from 95388
+2026/01/03 04:23:07 [notice] 95387#11951209: worker process 95388 exited with code 0
+2026/01/03 04:23:07 [notice] 95387#11951209: signal 23 (SIGIO) received
+2026/01/03 04:23:07 [notice] 95387#11951209: signal 23 (SIGIO) received from 96019
+2026/01/03 04:23:08 [info] 96019#11962553: *10 kevent() reported that client 127.0.0.1 closed keepalive connection
+2026/01/03 04:23:16 [info] 96019#11962553: *12 kevent() reported that client 127.0.0.1 closed keepalive connection
+2026/01/03 04:24:27 [notice] 95387#11951209: signal 1 (SIGHUP) received from 96850, reconfiguring
+2026/01/03 04:24:27 [notice] 95387#11951209: reconfiguring
+2026/01/03 04:24:27 [notice] 95387#11951209: using the "kqueue" event method
+2026/01/03 04:24:27 [notice] 95387#11951209: start worker processes
+2026/01/03 04:24:27 [notice] 95387#11951209: start worker process 96852
+2026/01/03 04:24:27 [notice] 95387#11951209: signal 23 (SIGIO) received
+2026/01/03 04:24:27 [notice] 96019#11962553: gracefully shutting down
+2026/01/03 04:24:27 [notice] 95387#11951209: signal 23 (SIGIO) received
+2026/01/03 04:24:27 [notice] 96019#11962553: exiting
+2026/01/03 04:24:27 [notice] 96019#11962553: exit
+2026/01/03 04:24:27 [notice] 95387#11951209: signal 20 (SIGCHLD) received from 96019
+2026/01/03 04:24:27 [notice] 95387#11951209: worker process 96019 exited with code 0
+2026/01/03 04:24:27 [notice] 95387#11951209: signal 23 (SIGIO) received
+2026/01/03 04:24:27 [notice] 95387#11951209: signal 23 (SIGIO) received from 96852
+2026/01/03 04:24:29 [info] 96852#11976614: *13 kevent() reported that client 127.0.0.1 closed keepalive connection
+2026/01/03 04:24:29 [info] 96852#11976614: *15 kevent() reported that client 127.0.0.1 closed keepalive connection
+2026/01/03 04:27:04 [info] 96852#11976614: *16 kevent() reported that client 127.0.0.1 closed keepalive connection
+2026/01/03 04:27:04 [info] 96852#11976614: *18 kevent() reported that client 127.0.0.1 closed keepalive connection
+2026/01/03 04:27:04 [info] 96852#11976614: *19 kevent() reported that client 127.0.0.1 closed keepalive connection

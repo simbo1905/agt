@@ -25,12 +25,14 @@ DESCRIPTION
 DUAL-MODE OPERATION
        git mode (filtered)
               When the binary is invoked as 'git' (via symlink or rename), it
-              operates as a drop-in Git replacement with the following filtering:
+              operates as a Git-like wrapper (powered by the vendored `gix` CLI)
+              with the following filtering:
 
               • Branches matching the configured prefix are hidden from output
               • Tags matching the configured prefix are hidden from output
               • Commits authored by the agent email are hidden from logs
-              • All standard Git commands work normally with filtered output
+              • Commands supported by `gix` work with filtered output (not all
+                `git(1)` subcommands are available yet)
 
        agt mode (unfiltered)
               When invoked as 'agt', no filtering is applied and additional
@@ -49,8 +51,8 @@ CONFIGURATION
               prefix are filtered in git mode. Example: agtsessions/
 
        agt.userEmail
-              The user's normal email for reference. Used to identify non-agent
-              commits.
+              The user's normal email for reference. Currently informational and
+              reserved for future filtering/attribution features.
 
        Example configuration:
               [agt]
@@ -68,7 +70,7 @@ COMMANDS
               2. Creates an adjacent main checkout directory (<name>)
               3. Configures the worktree to use the bare repo
               4. Sets up default agt configuration
-              5. Creates the agt state directory (.git/agt/)
+              5. Creates the agt state directory (<common-git-dir>/agt/)
 
               Options:
                   --path <directory>    Target directory (default: current dir)
@@ -92,20 +94,23 @@ COMMANDS
 
               This command:
               1. Reads last autocommit timestamp from .git/agt/timestamps/<id>
-              2. Scans <path> for files with mtime >= last timestamp
+              2. Scans the session worktree for files with mtime >= last timestamp
               3. Creates a tree object from all modified files (ignores .gitignore)
               4. Creates a commit on agtsessions/<id> with:
                  - Parent 1: last commit on agtsessions/<id>
-                 - Parent 2: current HEAD of the worktree's tracked branch
+                 - Parent 2: current HEAD of the user branch recorded at fork time
               5. Updates the timestamp file
               Note: The scan does not follow symlinks; symlink cycles are ignored.
               Note: Detached HEADs in agent worktrees are not supported.
+              Note: Symlinks are stored as symlinks (mode 120000) with their target
+                    path captured as-is; symlinks pointing outside the worktree may
+                    be broken when checked out elsewhere.
 
               Options:
                   -C <path>             Worktree path (required)
                   --session-id <id>     Session identifier (required)
                   --timestamp <epoch>   Override scan timestamp (for testing)
-                  --dry-run             Show what would be committed without committing
+                  --dry-run             Show what would be committed without committing (includes worktree path)
 
        agt list-sessions [-C <path>]
               List all agent sessions with their status.
@@ -133,10 +138,18 @@ COMMANDS
 
   GIT COMMANDS (both modes)
 
-       All standard Git commands are supported. In git mode, output is filtered
-       according to agt configuration. agt uses the vendored `gix` CLI for git
-       passthrough and the `agt-worktree` helper for worktree add/remove; system
+       Git-like passthrough is provided by the vendored `gix` CLI. In git mode,
+       output is filtered according to agt configuration. Not all `git(1)`
+       subcommands are implemented by `gix` yet; unsupported commands will fail.
+       agt uses the `agt-worktree` helper for linked worktree add/remove; system
        Git is not used. Override with AGT_GIX_PATH or AGT_WORKTREE_PATH.
+
+       Limitations (git mode, filtering enabled):
+              • `git worktree` is disabled in git mode
+              • `git log` filtering only works with the default log format; custom
+                `--oneline`/`--pretty`/`--format` requires `--disable-agt`
+              • `git commit` supports `-m/--message` only (no editor integration)
+              • `git add` supports explicit paths plus `-A/--all` and `-u/--update`
 
        Examples:
 
@@ -174,15 +187,16 @@ FILES
        .git/config
               Local repository configuration. Can override global [agt] settings.
 
-       .git/agt/
-              AGT state directory containing:
+       <common-git-dir>/agt/
+              AGT state directory stored in the repository's common git directory
+              (for bare repos: <repo>.git/agt/). Contains:
 
               timestamps/<session-id>
                      Last autocommit timestamp for each session (Unix epoch).
 
               sessions/<session-id>.json
-                     Session metadata including parent session, creation time,
-                     and worktree path.
+                     Session metadata including user branch, creation time,
+                     starting commit, and worktree path.
 
        sessions/<session-id>/
               Default location for agent session worktrees.
@@ -223,9 +237,8 @@ EXAMPLES
        View filtered branches (user branches only):
               $ git branch -a
 
-       Roll back an agent session by 3 commits:
-              $ cd sessions/agent-001
-              $ git reset --hard HEAD~3
+       Fork a new session from a previous point in history:
+              $ agt fork --session-id agent-rollback --from <commit-sha>
 
        Debug filtering issues:
               $ git --disable-agt branch -a

@@ -24,9 +24,11 @@ impl AgtConfig {
 
         Ok(Self {
             agent_email: config
-                .string("agt.agentEmail").map_or_else(|| "agt@local".to_string(), |s| s.to_string()),
+                .string("agt.agentEmail")
+                .map_or_else(|| "agt@local".to_string(), |s| s.to_string()),
             branch_prefix: config
-                .string("agt.branchPrefix").map_or_else(|| "agtsessions/".to_string(), |s| s.to_string()),
+                .string("agt.branchPrefix")
+                .map_or_else(|| "agtsessions/".to_string(), |s| s.to_string()),
             user_email: config.string("agt.userEmail").map(|s| s.to_string()),
         })
     }

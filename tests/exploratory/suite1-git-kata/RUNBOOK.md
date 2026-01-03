@@ -1,8 +1,10 @@
-# Suite 1: Git Kata - Basic Git Operations
+# Suite 1: Git Passthrough Kata - Basic `gix` Operations
 
 ## Objective
 
-Verify that `agt` works as a drop-in replacement for `git` for all standard Git operations. This is the foundation - if basic git doesn't work, nothing else matters.
+Verify that invoking `agt` as `git` reliably delegates to the vendored `gix` CLI (not system git), and that a minimal set of Git-like commands works as documented.
+
+Note: This suite does **not** assert full `git(1)` compatibility. `gix` is not feature-complete.
 
 ## Working Directory
 
@@ -23,7 +25,7 @@ This ensures consistent behavior. Verify with `./git --version` which should men
 
 Read `docs/agt.1.txt` - specifically:
 - "GIT COMMANDS (both modes)" section
-- "All standard Git commands are supported"
+- Limitations and environment variables (`AGT_GIX_PATH`, `AGT_WORKTREE_PATH`)
 
 ## Scenarios
 
@@ -39,105 +41,39 @@ Steps:
 
 Success: Passthrough uses vendored gix binary
 
-### Scenario 1.1: Repository Initialization
+### Scenario 1.1: Repository Discovery + Status
 
-Test that basic repo creation works:
-- Initialize a new repository
-- Check status
-- Verify .git directory structure
+Test that basic repo discovery and status works:
+- Create a repository with `agt init` (or `gix clone`)
+- Run `git status` (via `./git status`)
+- Verify it runs and exits successfully
 
-Success: `git init`, `git status` work as expected
+Success: `git status` works as expected
 
-### Scenario 1.2: Basic Commit Workflow
+### Scenario 1.2: Log / Branch / Tag Listing
 
-- Create a file
-- Stage it (`git add`)
-- Commit it (`git commit`)
 - View the log (`git log`)
+- List branches (`git branch`)
+- List tags (`git tag`)
 
-Success: Commit appears in log with correct message and author
+Success: Commands run successfully
 
-### Scenario 1.3: Branching
+### Scenario 1.3: Clone / Fetch (Local)
 
-- Create a branch
-- Switch to it
-- Make commits
-- Switch back to main
-- List branches
+- Create a local bare repo as a "remote"
+- Run `git clone` from it (via gix passthrough)
+- Run `git fetch` from it
 
-Success: Branch operations work, `git branch` shows branches correctly
+Success: Clone/fetch succeed for local remotes
 
-### Scenario 1.4: Merging
-
-- Create a feature branch
-- Make changes on feature branch
-- Switch to main
-- Merge feature branch
-- Verify merge commit
-
-Success: Merge completes, history shows merge
-
-### Scenario 1.5: Remote Operations (Local)
-
-- Create a bare repo as "remote"
-- Add it as a remote
-- Push to it
-- Clone from it to a new directory
-- Pull changes
-
-Success: Push/pull/clone work with local bare repo
-
-### Scenario 1.6: Diff and Status
-
-- Make changes to tracked file
-- Check `git diff`
-- Stage changes
-- Check `git diff --staged`
-- Check `git status`
-
-Success: Diff output shows changes correctly
-
-### Scenario 1.7: Reset and Checkout
-
-- Make changes
-- Discard with `git checkout -- file`
-- Make and stage changes
-- Unstage with `git reset`
-- Create commits, then reset HEAD
-
-Success: Working directory manipulation works
-
-### Scenario 1.8: Stash
-
-- Make changes
-- Stash them
-- Verify clean working directory
-- Apply stash
-- Verify changes restored
-
-Success: Stash push/pop works
-
-### Scenario 1.9: Tags
-
-- Create a commit
-- Tag it (lightweight and annotated)
-- List tags
-- Checkout by tag
-
-Success: Tag operations work
-
-### Scenario 1.10: Log Formatting
-
-- Create several commits
-- Test `git log --oneline`
-- Test `git log --graph`
-- Test `git log -p`
-
-Success: Various log formats display correctly
+Note: `git log` filtering in git mode only supports the default format. Custom
+formats (`--oneline`, `--pretty`, `--format`) require `--disable-agt`.
 
 ## Success Criteria
 
-ALL scenarios must pass. Any git command that fails when invoked via `agt` (in non-filtered mode) is a critical bug.
+All scenarios must pass. Failures indicate either:
+- Vendored `gix` passthrough is not wired correctly, or
+- Documentation claims exceed current `gix` capabilities
 
 ## Failure Modes
 
@@ -148,4 +84,4 @@ ALL scenarios must pass. Any git command that fails when invoked via `agt` (in n
 
 ## Notes
 
-This suite does NOT test agt-specific features like filtering or autocommit. It purely validates git compatibility.
+This suite does NOT test agt-specific commands like `agt autocommit`. It purely validates `gix` passthrough behavior.

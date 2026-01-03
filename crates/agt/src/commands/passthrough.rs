@@ -1,3 +1,4 @@
+use crate::commands::git_porcelain;
 use crate::config::AgtConfig;
 use crate::gix_cli::{find_gix_binary, repo_base_path};
 use anyhow::Result;
@@ -23,6 +24,21 @@ pub fn run(
     let is_git_mode = _is_git_mode;
     if is_git_mode && args.first().map(String::as_str) == Some("worktree") {
         anyhow::bail!("worktree operations are disabled in git mode");
+    }
+
+    if is_git_mode && git_porcelain::maybe_handle_git_command(args, repo)? {
+        return Ok(());
+    }
+
+    if is_git_mode && !disable_filter && args.first().map(String::as_str) == Some("log") {
+        if args
+            .iter()
+            .any(|a| a == "--oneline" || a.starts_with("--pretty") || a.starts_with("--format"))
+        {
+            anyhow::bail!(
+                "git log filtering is only supported for the default log format; rerun without custom formatting or use --disable-agt"
+            );
+        }
     }
 
     let mapped_args = map_args_for_gix(args);
@@ -81,7 +97,13 @@ fn filter_output(output: &str, args: &[String], config: &AgtConfig) -> String {
 fn filter_branch_output(output: &str, config: &AgtConfig) -> String {
     output
         .lines()
-        .filter(|line| !has_branch_prefix(line, &config.branch_prefix))
+        .filter(|line| {
+            let hide = has_branch_prefix(line, &config.branch_prefix);
+            if hide && debug_enabled() {
+                eprintln!("[agt] filtered branch line: {line}");
+            }
+            !hide
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -89,13 +111,22 @@ fn filter_branch_output(output: &str, config: &AgtConfig) -> String {
 fn filter_tag_output(output: &str, config: &AgtConfig) -> String {
     output
         .lines()
-        .filter(|line| !has_branch_prefix(line, &config.branch_prefix))
+        .filter(|line| {
+            let hide = has_branch_prefix(line, &config.branch_prefix);
+            if hide && debug_enabled() {
+                eprintln!("[agt] filtered tag line: {line}");
+            }
+            !hide
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
 fn filter_log_output(output: &str, config: &AgtConfig) -> String {
     if !output.contains("Author:") {
+        if debug_enabled() {
+            eprintln!("[agt] log output not parseable for author filtering; leaving unfiltered");
+        }
         return output.to_string();
     }
 
@@ -124,6 +155,8 @@ fn filter_log_output(output: &str, config: &AgtConfig) -> String {
         }
         if !hide {
             kept.push(block.join("\n"));
+        } else if debug_enabled() {
+            eprintln!("[agt] filtered log commit block (agent author)");
         }
     }
 
@@ -131,6 +164,13 @@ fn filter_log_output(output: &str, config: &AgtConfig) -> String {
 }
 
 fn has_branch_prefix(line: &str, prefix: &str) -> bool {
-    let trimmed = line.trim_start_matches('*').trim_start();
+    let trimmed = line
+        .trim_start()
+        .trim_start_matches(['*', '+'])
+        .trim_start();
     trimmed.starts_with(prefix) || trimmed.contains(&format!("/{prefix}"))
+}
+
+fn debug_enabled() -> bool {
+    std::env::var("AGT_DEBUG").as_deref() == Ok("1")
 }

@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenCode Deck - Agent Session Manager</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .session-card:hover { transform: translateY(-2px); }
+    .status-running { background-color: #10b981; }
+    .status-idle { background-color: #6b7280; }
+    .status-stopped { background-color: #ef4444; }
+  </style>
+</head>
+<body class="bg-gray-900 text-white">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    const API_BASE = '/api';
+
+    async function fetchJSON(url, options = {}) {
+      const res = await fetch(url, {
+        ...options,
+        headers: { 'Content-Type': 'application/json', ...options.headers }
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error || 'Request failed');
+      }
+      return res.json();
+    }
+
+    function StatusBadge({ status }) {
+      const colors = {
+        running: 'bg-green-500',
+        idle: 'bg-gray-500',
+        stopped: 'bg-red-500'
+      };
+      return (
+        <span className={`px-2 py-1 rounded text-xs font-medium ${colors[status] || 'bg-gray-500'}`}>
+          {status}
+        </span>
+      );
+    }
+
+    function ProjectSelector({ projects, selectedProject, onSelect }) {
+      return (
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-400 mb-2">Project</label>
+          <select
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500"
+            value={selectedProject?.id || ''}
+            onChange={(e) => onSelect(projects.find(p => p.id === e.target.value))}
+          >
+            <option value="">Select a project...</option>
+            {projects.map(p => (
+              <option key={p.id} value={p.id}>{p.name} ({p.main_worktree_path})</option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+
+    function SessionCard({ session, onStart, onStop, onAutocommit, onDelete, onSelect, isSelected }) {
+      return (
+        <div
+          className={`session-card p-4 bg-gray-800 rounded-lg border transition-all cursor-pointer ${
+            isSelected ? 'border-blue-500 ring-2 ring-blue-500' : 'border-gray-700 hover:border-gray-600'
+          }`}
+          onClick={() => onSelect(session)}
+        >
+          <div className="flex justify-between items-start mb-3">
+            <div>
+              <h3 className="font-semibold text-lg">{session.id}</h3>
+              <p className="text-sm text-gray-400">{session.branch}</p>
+            </div>
+            <StatusBadge status={session.status} />
+          </div>
+          <div className="text-xs text-gray-500 mb-3">
+            <p>Worktree: {session.worktree_path}</p>
+            {session.opencode_port && <p>Port: {session.opencode_port}</p>}
+          </div>
+          <div className="flex gap-2" onClick={e => e.stopPropagation()}>
+            {session.status !== 'running' ? (
+              <button
+                onClick={() => onStart(session.id)}
+                className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-sm"
+              >
+                Start
+              </button>
+            ) : (
+              <button
+                onClick={() => onStop(session.id)}
+                className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 rounded text-sm"
+              >
+                Stop
+              </button>
+            )}
+            <button
+              onClick={() => onAutocommit(session.id)}
+              className="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm"
+            >
+              Snapshot
+            </button>
+            <button
+              onClick={() => onDelete(session.id)}
+              className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function ForkSessionModal({ project, onClose, onFork }) {
+      const [sessionId, setSessionId] = useState('');
+      const [fromRef, setFromRef] = useState('HEAD');
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!sessionId.trim()) return;
+        setLoading(true);
+        setError(null);
+        try {
+          await onFork(sessionId.trim(), fromRef.trim());
+          onClose();
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md">
+            <h2 className="text-xl font-bold mb-4">Fork New Session</h2>
+            <form onSubmit={handleSubmit}>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-400 mb-1">Session ID</label>
+                <input
+                  type="text"
+                  value={sessionId}
+                  onChange={(e) => setSessionId(e.target.value)}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                  placeholder="e.g., agent-claude"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-400 mb-1">From (branch/commit)</label>
+                <input
+                  type="text"
+                  value={fromRef}
+                  onChange={(e) => setFromRef(e.target.value)}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                  placeholder="HEAD, main, or commit SHA"
+                />
+              </div>
+              {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50"
+                >
+                  {loading ? 'Creating...' : 'Fork Session'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    function AddProjectModal({ onClose, onAdd }) {
+      const [formData, setFormData] = useState({
+        id: '',
+        name: '',
+        bare_repo_path: '',
+        main_worktree_path: '',
+        remote_url: ''
+      });
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        setError(null);
+        try {
+          await onAdd(formData);
+          onClose();
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md">
+            <h2 className="text-xl font-bold mb-4">Register Project</h2>
+            <form onSubmit={handleSubmit}>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-400 mb-1">Project ID</label>
+                <input
+                  type="text"
+                  value={formData.id}
+                  onChange={(e) => setFormData({...formData, id: e.target.value})}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                  placeholder="e.g., proj-myapp"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-400 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({...formData, name: e.target.value})}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                  placeholder="My Application"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-400 mb-1">Bare Repo Path</label>
+                <input
+                  type="text"
+                  value={formData.bare_repo_path}
+                  onChange={(e) => setFormData({...formData, bare_repo_path: e.target.value})}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                  placeholder="/path/to/myapp.git"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-400 mb-1">Main Worktree Path</label>
+                <input
+                  type="text"
+                  value={formData.main_worktree_path}
+                  onChange={(e) => setFormData({...formData, main_worktree_path: e.target.value})}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                  placeholder="/path/to/myapp"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-400 mb-1">Remote URL (optional)</label>
+                <input
+                  type="text"
+                  value={formData.remote_url}
+                  onChange={(e) => setFormData({...formData, remote_url: e.target.value})}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                  placeholder="https://github.com/user/repo.git"
+                />
+              </div>
+              {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-50"
+                >
+                  {loading ? 'Registering...' : 'Register'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    function SnapshotList({ snapshots }) {
+      if (!snapshots.length) {
+        return <p className="text-gray-500 text-sm">No snapshots yet</p>;
+      }
+      return (
+        <div className="space-y-2">
+          {snapshots.map(s => (
+            <div key={s.id} className="bg-gray-700 rounded p-2 text-sm">
+              <div className="flex justify-between">
+                <code className="text-blue-400">{s.commit_sha?.slice(0, 8)}</code>
+                <span className="text-gray-400">{new Date(s.created_at).toLocaleString()}</span>
+              </div>
+              {s.files_changed && <span className="text-gray-500">{s.files_changed} files changed</span>}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    function SessionDetail({ session, snapshots }) {
+      if (!session) {
+        return (
+          <div className="flex items-center justify-center h-full text-gray-500">
+            Select a session to view details
+          </div>
+        );
+      }
+
+      return (
+        <div className="h-full flex flex-col">
+          <div className="p-4 border-b border-gray-700">
+            <div className="flex justify-between items-center mb-2">
+              <h2 className="text-xl font-bold">{session.id}</h2>
+              <StatusBadge status={session.status} />
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div>
+                <span className="text-gray-400">Branch:</span>
+                <span className="ml-2">{session.branch}</span>
+              </div>
+              <div>
+                <span className="text-gray-400">Port:</span>
+                <span className="ml-2">{session.opencode_port || 'N/A'}</span>
+              </div>
+              <div className="col-span-2">
+                <span className="text-gray-400">Worktree:</span>
+                <span className="ml-2 text-xs">{session.worktree_path}</span>
+              </div>
+            </div>
+          </div>
+
+          {session.status === 'running' && session.opencode_port ? (
+            <div className="flex-1 min-h-0">
+              <iframe
+                src={`/opencode/${session.id}/`}
+                className="w-full h-full border-0"
+                title="OpenCode Portal"
+              />
+            </div>
+          ) : (
+            <div className="flex-1 p-4 overflow-auto">
+              <h3 className="font-semibold mb-3">Snapshots</h3>
+              <SnapshotList snapshots={snapshots} />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function App() {
+      const [projects, setProjects] = useState([]);
+      const [selectedProject, setSelectedProject] = useState(null);
+      const [sessions, setSessions] = useState([]);
+      const [selectedSession, setSelectedSession] = useState(null);
+      const [snapshots, setSnapshots] = useState([]);
+      const [showForkModal, setShowForkModal] = useState(false);
+      const [showAddProjectModal, setShowAddProjectModal] = useState(false);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+
+      const loadProjects = useCallback(async () => {
+        try {
+          const data = await fetchJSON(`${API_BASE}/projects`);
+          setProjects(data);
+        } catch (err) {
+          setError(err.message);
+        }
+      }, []);
+
+      const loadSessions = useCallback(async (projectId) => {
+        if (!projectId) {
+          setSessions([]);
+          return;
+        }
+        try {
+          const data = await fetchJSON(`${API_BASE}/sessions?project_id=${projectId}`);
+          setSessions(data);
+        } catch (err) {
+          setError(err.message);
+        }
+      }, []);
+
+      const loadSnapshots = useCallback(async (sessionId) => {
+        if (!sessionId) {
+          setSnapshots([]);
+          return;
+        }
+        try {
+          const data = await fetchJSON(`${API_BASE}/sessions/${sessionId}/snapshots`);
+          setSnapshots(data);
+        } catch (err) {
+          console.error('Failed to load snapshots:', err);
+        }
+      }, []);
+
+      useEffect(() => {
+        loadProjects().finally(() => setLoading(false));
+      }, [loadProjects]);
+
+      useEffect(() => {
+        if (selectedProject) {
+          loadSessions(selectedProject.id);
+        }
+      }, [selectedProject, loadSessions]);
+
+      useEffect(() => {
+        if (selectedSession) {
+          loadSnapshots(selectedSession.id);
+        }
+      }, [selectedSession, loadSnapshots]);
+
+      const handleAddProject = async (projectData) => {
+        await fetchJSON(`${API_BASE}/projects`, {
+          method: 'POST',
+          body: JSON.stringify(projectData)
+        });
+        await loadProjects();
+      };
+
+      const handleForkSession = async (sessionId, fromRef) => {
+        await fetchJSON(`${API_BASE}/sessions/fork`, {
+          method: 'POST',
+          body: JSON.stringify({
+            project_id: selectedProject.id,
+            session_id: sessionId,
+            from_ref: fromRef
+          })
+        });
+        await loadSessions(selectedProject.id);
+      };
+
+      const handleStartSession = async (sessionId) => {
+        await fetchJSON(`${API_BASE}/sessions/${sessionId}/start`, { method: 'POST' });
+        await loadSessions(selectedProject.id);
+      };
+
+      const handleStopSession = async (sessionId) => {
+        await fetchJSON(`${API_BASE}/sessions/${sessionId}/stop`, { method: 'POST' });
+        await loadSessions(selectedProject.id);
+      };
+
+      const handleAutocommit = async (sessionId) => {
+        await fetchJSON(`${API_BASE}/sessions/${sessionId}/autocommit`, { method: 'POST' });
+        if (selectedSession?.id === sessionId) {
+          await loadSnapshots(sessionId);
+        }
+      };
+
+      const handleDeleteSession = async (sessionId) => {
+        if (!confirm(`Delete session ${sessionId}? This will remove the worktree.`)) return;
+        await fetchJSON(`${API_BASE}/sessions/${sessionId}`, { method: 'DELETE' });
+        if (selectedSession?.id === sessionId) {
+          setSelectedSession(null);
+        }
+        await loadSessions(selectedProject.id);
+      };
+
+      if (loading) {
+        return (
+          <div className="flex items-center justify-center h-screen">
+            <div className="text-xl">Loading...</div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="h-screen flex flex-col">
+          <header className="bg-gray-800 border-b border-gray-700 px-6 py-4">
+            <div className="flex justify-between items-center">
+              <h1 className="text-2xl font-bold">OpenCode Deck</h1>
+              <div className="text-sm text-gray-400">
+                Agent Session Manager for agt
+              </div>
+            </div>
+          </header>
+
+          <div className="flex-1 flex min-h-0">
+            <aside className="w-80 bg-gray-800 border-r border-gray-700 p-4 overflow-auto">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="font-semibold">Projects</h2>
+                <button
+                  onClick={() => setShowAddProjectModal(true)}
+                  className="text-sm px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded"
+                >
+                  + Add
+                </button>
+              </div>
+
+              <ProjectSelector
+                projects={projects}
+                selectedProject={selectedProject}
+                onSelect={setSelectedProject}
+              />
+
+              {selectedProject && (
+                <>
+                  <div className="flex justify-between items-center mb-4">
+                    <h2 className="font-semibold">Sessions</h2>
+                    <button
+                      onClick={() => setShowForkModal(true)}
+                      className="text-sm px-2 py-1 bg-green-600 hover:bg-green-700 rounded"
+                    >
+                      + Fork
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {sessions.length === 0 ? (
+                      <p className="text-gray-500 text-sm">No sessions. Fork one to get started.</p>
+                    ) : (
+                      sessions.map(s => (
+                        <SessionCard
+                          key={s.id}
+                          session={s}
+                          isSelected={selectedSession?.id === s.id}
+                          onSelect={setSelectedSession}
+                          onStart={handleStartSession}
+                          onStop={handleStopSession}
+                          onAutocommit={handleAutocommit}
+                          onDelete={handleDeleteSession}
+                        />
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </aside>
+
+            <main className="flex-1 bg-gray-900">
+              <SessionDetail session={selectedSession} snapshots={snapshots} />
+            </main>
+          </div>
+
+          {error && (
+            <div className="fixed bottom-4 right-4 bg-red-600 text-white px-4 py-2 rounded shadow-lg">
+              {error}
+              <button onClick={() => setError(null)} className="ml-2 font-bold">x</button>
+            </div>
+          )}
+
+          {showForkModal && (
+            <ForkSessionModal
+              project={selectedProject}
+              onClose={() => setShowForkModal(false)}
+              onFork={handleForkSession}
+            />
+          )}
+
+          {showAddProjectModal && (
+            <AddProjectModal
+              onClose={() => setShowAddProjectModal(false)}
+              onAdd={handleAddProject}
+            />
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

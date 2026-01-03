@@ -218,6 +218,86 @@ fn test_autocommit_with_timestamp_override() -> Result<(), Box<dyn std::error::E
 }
 
 #[test]
+fn test_autocommit_dry_run_output_includes_worktree() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_repo_with_session()?;
+
+    let session_path = repo.worktree().join("sessions/test-session");
+    fs::write(session_path.join("dryrun.txt"), "x")?;
+
+    let output = agt_cmd_with_gix()?
+        .args([
+            "autocommit",
+            "-C",
+            session_path.to_str().unwrap(),
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+            "--dry-run",
+        ])
+        .current_dir(repo.worktree())
+        .output()?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("Dry run: session test-session"));
+    assert!(stdout.contains("Worktree:"));
+    assert!(stdout.contains(session_path.to_str().unwrap()));
+    assert!(stdout.contains("M "));
+
+    Ok(())
+}
+
+#[test]
+fn test_autocommit_parent2_is_user_branch_head() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_repo_with_session()?;
+
+    let session_path = repo.worktree().join("sessions/test-session");
+    fs::write(session_path.join("p2.txt"), "p2")?;
+
+    agt_cmd_with_gix()?
+        .args([
+            "autocommit",
+            "-C",
+            session_path.to_str().unwrap(),
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+        ])
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    // A second autocommit ensures parent1 differs from parent2 after the agent branch advances.
+    fs::write(session_path.join("p2b.txt"), "p2b")?;
+    agt_cmd_with_gix()?
+        .args([
+            "autocommit",
+            "-C",
+            session_path.to_str().unwrap(),
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+        ])
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    let repo = gix::open(repo.worktree())?;
+    let user_head = repo.find_reference("refs/heads/main")?.peel_to_commit()?.id;
+
+    let mut branch_ref = repo.find_reference("refs/heads/agtsessions/test-session")?;
+    let commit = branch_ref.peel_to_commit()?;
+    let parents: Vec<_> = commit.parent_ids().map(|id| id.to_owned()).collect();
+    assert_eq!(parents.len(), 2);
+    assert_eq!(parents[1], user_head);
+    assert_ne!(parents[0], parents[1]);
+
+    Ok(())
+}
+
+#[test]
 fn test_autocommit_records_deletions() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_session()?;
     let session_path = repo.worktree().join("sessions/test-session");
@@ -317,6 +397,37 @@ fn test_git_mode_filters_branches() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn test_git_mode_add_and_commit() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_basic_repo()?;
+    let worktree = repo.worktree();
+
+    fs::write(worktree.join("git-add.txt"), "hello")?;
+
+    git_mode_cmd(repo.tmp())?
+        .args(["add", "git-add.txt"])
+        .env("AGT_GIX_PATH", ensure_gix()?)
+        .current_dir(worktree)
+        .assert()
+        .success();
+
+    git_mode_cmd(repo.tmp())?
+        .args(["commit", "-m", "add via git mode"])
+        .env("AGT_GIX_PATH", ensure_gix()?)
+        .current_dir(worktree)
+        .assert()
+        .success();
+
+    let repo = gix::open(worktree)?;
+    let mut branch_ref = repo.find_reference("refs/heads/main")?;
+    let commit = branch_ref.peel_to_commit()?;
+    let tree = commit.tree()?;
+    let entry = tree.lookup_entry_by_path(std::path::Path::new("git-add.txt"))?;
+    assert!(entry.is_some());
+
+    Ok(())
+}
+
+#[test]
 fn test_agt_mode_shows_all_branches() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_agent_branch()?;
 
@@ -356,12 +467,20 @@ fn setup_basic_repo() -> Result<TestRepo, Box<dyn std::error::Error>> {
     init_bare_repo_with_commit(&bare)?;
 
     let worktree = tmp.path().join("repo");
-    fs::create_dir_all(&worktree)?;
-    fs::write(worktree.join(".git"), "gitdir: ../repo.git\n")?;
-
-    let repo = gix::open(&bare)?;
-    let tree_id = repo.head()?.peel_to_commit_in_place()?.tree_id()?.detach();
-    checkout_tree_to_worktree(&repo, &worktree, tree_id)?;
+    let status = Command::new(ensure_worktree_tool()?)
+        .args([
+            "add",
+            "--git-dir",
+            bare.to_str().unwrap(),
+            "--worktree",
+            worktree.to_str().unwrap(),
+            "--name",
+            "repo",
+            "--branch",
+            "refs/heads/main",
+        ])
+        .status()?;
+    assert!(status.success(), "agt-worktree add failed");
 
     Ok(TestRepo {
         tmp,
@@ -494,36 +613,6 @@ fn write_tree_from_worktree(
     }
 
     Ok(editor.write()?.detach())
-}
-
-fn checkout_tree_to_worktree(
-    repo: &gix::Repository,
-    worktree: &Path,
-    tree_id: gix::ObjectId,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut index = repo.index_from_tree(&tree_id)?;
-    index.set_path(repo.index_path());
-
-    let mut opts = gix_worktree_state::checkout::Options::default();
-    opts.fs = gix_fs::Capabilities::probe(worktree);
-    opts.destination_is_initially_empty = true;
-    opts.overwrite_existing = true;
-
-    let files = gix_features::progress::Discard;
-    let bytes = gix_features::progress::Discard;
-    let interrupt = std::sync::atomic::AtomicBool::new(false);
-    gix_worktree_state::checkout(
-        &mut index,
-        worktree,
-        repo.objects.clone().into_arc()?,
-        &files,
-        &bytes,
-        &interrupt,
-        opts,
-    )?;
-
-    index.write(Default::default())?;
-    Ok(())
 }
 
 fn path_for_tree(path: &Path) -> String {
