@@ -100,16 +100,18 @@ pub fn run(
         let mut deleted: Vec<_> = snapshot_delta.deleted.iter().collect();
         deleted.sort();
 
+        println!("Dry run: session {session_id}");
+        println!("  Worktree: {}", session_worktree.display());
         println!(
-            "Would commit {} files, delete {} files:",
+            "  Would commit {} files, delete {} files:",
             snapshot_delta.changed.len(),
             snapshot_delta.deleted.len()
         );
         for f in changed {
-            println!("  M {}", f.display());
+            println!("  M {}", session_worktree.join(f).display());
         }
         for f in deleted {
-            println!("  D {}", f.display());
+            println!("  D {}", session_worktree.join(f).display());
         }
         return Ok(());
     }

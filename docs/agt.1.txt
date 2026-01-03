@@ -110,7 +110,7 @@ COMMANDS
                   -C <path>             Worktree path (required)
                   --session-id <id>     Session identifier (required)
                   --timestamp <epoch>   Override scan timestamp (for testing)
-                  --dry-run             Show what would be committed without committing
+                  --dry-run             Show what would be committed without committing (includes worktree path)
 
        agt list-sessions [-C <path>]
               List all agent sessions with their status.

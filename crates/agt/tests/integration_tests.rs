@@ -218,6 +218,36 @@ fn test_autocommit_with_timestamp_override() -> Result<(), Box<dyn std::error::E
 }
 
 #[test]
+fn test_autocommit_dry_run_output_includes_worktree() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_repo_with_session()?;
+
+    let session_path = repo.worktree().join("sessions/test-session");
+    fs::write(session_path.join("dryrun.txt"), "x")?;
+
+    let output = agt_cmd_with_gix()?
+        .args([
+            "autocommit",
+            "-C",
+            session_path.to_str().unwrap(),
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+            "--dry-run",
+        ])
+        .current_dir(repo.worktree())
+        .output()?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("Dry run: session test-session"));
+    assert!(stdout.contains("Worktree:"));
+    assert!(stdout.contains(session_path.to_str().unwrap()));
+    assert!(stdout.contains("M "));
+
+    Ok(())
+}
+
+#[test]
 fn test_autocommit_parent2_is_user_branch_head() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_session()?;
 
