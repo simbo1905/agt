@@ -15,7 +15,11 @@ fn main() -> Result<()> {
     let invoked_as = std::env::args().next().unwrap_or_default();
     let is_git_mode = invoked_as.contains("git") && !invoked_as.contains("agt");
 
-    // Parse CLI arguments
+    if is_git_mode {
+        return run_git_mode();
+    }
+
+    // Parse CLI arguments (agt mode)
     let cli = Cli::parse();
 
     // Set up working directory
@@ -70,4 +74,42 @@ fn main() -> Result<()> {
             commands::passthrough::run(&cli.args, is_git_mode, disable_filter, &config, &repo)
         }
     }
+}
+
+fn run_git_mode() -> Result<()> {
+    // In git mode we do not use clap parsing of subcommands: we must accept arbitrary
+    // git-style flags (e.g. `-c`, `--work-tree`, etc.) and pass them through.
+    let mut args = Vec::<String>::new();
+    let mut disable_filter = std::env::var("AGT_DISABLE_FILTER").is_ok();
+    let mut directory: Option<std::path::PathBuf> = None;
+
+    let mut it = std::env::args().skip(1).peekable();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--disable-agt" => {
+                disable_filter = true;
+            }
+            "-C" => {
+                let dir = it
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("Expected path after -C"))?;
+                directory = Some(std::path::PathBuf::from(dir));
+            }
+            _ if arg.starts_with("-C") && arg.len() > 2 => {
+                directory = Some(std::path::PathBuf::from(arg.trim_start_matches("-C")));
+            }
+            _ => args.push(arg),
+        }
+    }
+
+    if let Some(dir) = directory {
+        std::env::set_current_dir(&dir)
+            .with_context(|| format!("Failed to change to directory: {}", dir.display()))?;
+    }
+
+    let repo = gix::discover(".").with_context(|| "Failed to discover Git repository")?;
+    let config =
+        config::AgtConfig::load(&repo).with_context(|| "Failed to load AGT configuration")?;
+
+    commands::passthrough::run(&args, true, disable_filter, &config, &repo)
 }

@@ -3,7 +3,21 @@ use crate::gix_cli::{find_worktree_binary, repo_base_path};
 use anyhow::{Context, Result};
 use gix::Repository;
 use gix_ref::transaction::PreviousValue;
+use serde::{Deserialize, Serialize};
 use std::process::Command as StdCommand;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SessionMetadata {
+    session_id: String,
+    branch: String,
+    worktree: String,
+    from: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    from_spec: Option<String>,
+    from_commit: String,
+    user_branch: String,
+    created_at: u64,
+}
 
 pub fn run(
     repo: &Repository,
@@ -12,6 +26,8 @@ pub fn run(
     config: &AgtConfig,
 ) -> Result<()> {
     let branch_name = format!("{}{}", config.branch_prefix, session_id);
+
+    let user_branch = resolve_user_branch(repo, from)?;
 
     // 1. Resolve starting point
     let start_commit = match from {
@@ -63,7 +79,9 @@ pub fn run(
         .status()
         .context("Failed to create worktree")?;
     if !status.success() {
-        return Err(anyhow::anyhow!("Failed to create worktree for {session_id}"));
+        return Err(anyhow::anyhow!(
+            "Failed to create worktree for {session_id}"
+        ));
     }
 
     // 4. Initialize timestamp
@@ -79,16 +97,59 @@ pub fn run(
     let sessions_dir = agt_dir.join("sessions");
     std::fs::create_dir_all(&sessions_dir)?;
     let session_file = sessions_dir.join(format!("{session_id}.json"));
-    let from_value = from.unwrap_or("HEAD");
-    let session_json = format!(
-        "{{\"session_id\":\"{session_id}\",\"branch\":\"{branch_name}\",\"worktree\":\"{}\",\"from\":\"{from_value}\",\"created_at\":{now}}}",
-        worktree_path.display()
-    );
-    std::fs::write(&session_file, session_json)?;
+    let session = SessionMetadata {
+        session_id: session_id.to_string(),
+        branch: branch_name.clone(),
+        worktree: std::fs::canonicalize(&worktree_path)
+            .unwrap_or(worktree_path.clone())
+            .display()
+            .to_string(),
+        from: start_commit.id.to_string(),
+        from_spec: from.map(str::to_string),
+        from_commit: start_commit.id.to_string(),
+        user_branch,
+        created_at: now,
+    };
+    std::fs::write(&session_file, serde_json::to_string(&session)?)?;
 
     println!("Created agent session: {session_id}");
     println!("  Branch: {branch_name}");
     println!("  Worktree: {}", worktree_path.display());
 
     Ok(())
+}
+
+fn resolve_user_branch(repo: &Repository, from: Option<&str>) -> Result<String> {
+    if let Some(spec) = from {
+        // 1) If `--from` is another session id, inherit its user branch.
+        let inherited = repo
+            .common_dir()
+            .join("agt/sessions")
+            .join(format!("{spec}.json"));
+        if inherited.exists() {
+            let raw = std::fs::read_to_string(&inherited)?;
+            let session: SessionMetadata = serde_json::from_str(&raw)?;
+            return Ok(session.user_branch);
+        }
+
+        // 2) If `--from` names a local branch, use that as user branch.
+        let candidate = if spec.starts_with("refs/") {
+            spec.to_string()
+        } else {
+            format!("refs/heads/{spec}")
+        };
+        if repo.find_reference(&candidate).is_ok() {
+            return Ok(candidate);
+        }
+    }
+
+    // 3) Otherwise use current HEAD referent; we explicitly do not support detached/unborn.
+    let head = repo.head()?;
+    if head.is_unborn() {
+        anyhow::bail!("Unborn HEAD is not supported for agt fork");
+    }
+    let referent = head
+        .referent_name()
+        .ok_or_else(|| anyhow::anyhow!("Detached HEAD is not supported for agt fork"))?;
+    Ok(referent.as_bstr().to_string())
 }

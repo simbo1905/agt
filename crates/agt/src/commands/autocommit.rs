@@ -1,11 +1,18 @@
 use crate::config::AgtConfig;
 use anyhow::{Context, Result};
-use gix::Repository;
 use gix::object::tree::EntryKind;
+use gix::Repository;
 use gix_object::TreeRefIter;
 use gix_path::from_byte_slice;
+use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Deserialize)]
+struct SessionMetadata {
+    user_branch: String,
+    worktree: String,
+}
 
 pub fn run(
     repo: &Repository,
@@ -17,11 +24,59 @@ pub fn run(
 ) -> Result<()> {
     let branch_name = format!("{}{}", config.branch_prefix, session_id);
 
+    // Resolve session metadata up front so autocommit is always scoped to the
+    // session worktree (avoids cross-contamination when invoked from repo root).
+    let session_meta_path = repo
+        .common_dir()
+        .join("agt/sessions")
+        .join(format!("{session_id}.json"));
+    let session_meta_raw = std::fs::read_to_string(&session_meta_path)
+        .with_context(|| format!("Failed to read {}", session_meta_path.display()))?;
+    let session: SessionMetadata = serde_json::from_str(&session_meta_raw)
+        .with_context(|| format!("Failed to parse {}", session_meta_path.display()))?;
+
+    let mut session_worktree = PathBuf::from(&session.worktree);
+    if !session_worktree.exists() {
+        // Back-compat/migration: older session metadata may contain a worktree path
+        // relative to the main worktree, but autocommit is often invoked from
+        // inside the session worktree via `-C`. In that case, prefer the current
+        // directory if it matches the session id.
+        if worktree_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n == session_id)
+            && worktree_path.exists()
+        {
+            session_worktree = worktree_path.to_path_buf();
+
+            if let Ok(abs) = std::fs::canonicalize(&session_worktree) {
+                if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&session_meta_raw) {
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.insert(
+                            "worktree".to_string(),
+                            serde_json::Value::String(abs.display().to_string()),
+                        );
+                        let _ = std::fs::write(&session_meta_path, serde_json::to_string(&v)?);
+                    }
+                }
+            }
+        } else {
+            anyhow::bail!(
+                "Session worktree does not exist: {}",
+                session_worktree.display()
+            );
+        }
+    }
+
     // 1. Read last timestamp (use common_dir for worktree support)
     let timestamp_file = repo.common_dir().join("agt/timestamps").join(session_id);
-    let last_timestamp: i64 = std::fs::read_to_string(&timestamp_file)?.trim().parse()?;
+    let last_timestamp: u64 = std::fs::read_to_string(&timestamp_file)?.trim().parse()?;
 
-    let scan_timestamp = override_timestamp.unwrap_or(last_timestamp);
+    let scan_timestamp: u64 = match override_timestamp {
+        Some(t) if t < 0 => anyhow::bail!("timestamp override must be >= 0"),
+        Some(t) => t as u64,
+        None => last_timestamp,
+    };
 
     // 3. Build tree from files (not using index)
     let agent_branch_ref = format!("refs/heads/{branch_name}");
@@ -31,7 +86,8 @@ pub fn run(
         .context("Failed to resolve agent session branch")?;
 
     // 2. Scan for modified files
-    let snapshot_delta = compute_snapshot_delta(repo, worktree_path, &parent1.tree()?, scan_timestamp)?;
+    let snapshot_delta =
+        compute_snapshot_delta(repo, &session_worktree, &parent1.tree()?, scan_timestamp)?;
 
     if snapshot_delta.changed.is_empty() && snapshot_delta.deleted.is_empty() {
         println!("No modified files since last autocommit");
@@ -39,31 +95,43 @@ pub fn run(
     }
 
     if dry_run {
+        let mut changed: Vec<_> = snapshot_delta.changed.iter().collect();
+        changed.sort();
+        let mut deleted: Vec<_> = snapshot_delta.deleted.iter().collect();
+        deleted.sort();
+
         println!(
             "Would commit {} files, delete {} files:",
             snapshot_delta.changed.len(),
             snapshot_delta.deleted.len()
         );
-        for f in &snapshot_delta.changed {
-            println!("  {}", f.display());
+        for f in changed {
+            println!("  M {}", f.display());
+        }
+        for f in deleted {
+            println!("  D {}", f.display());
         }
         return Ok(());
     }
 
-    let worktree_repo = gix::open(worktree_path)?;
-    let mut head = worktree_repo.head()?;
+    // Parent2 is the user branch head recorded at fork time (not the agent worktree HEAD).
+    let parent2_id = repo
+        .find_reference(&session.user_branch)?
+        .peel_to_commit()
+        .context("Failed to resolve user branch for parent2")?
+        .id;
+
+    // Explicitly reject detached/unborn HEAD inside the agent worktree.
+    let worktree_repo = gix::open(&session_worktree)?;
+    let head = worktree_repo.head()?;
     if head.is_detached() {
         anyhow::bail!("Detached HEAD in agent worktree is not supported");
     }
     if head.is_unborn() {
         anyhow::bail!("Unborn HEAD in agent worktree is not supported");
     }
-    let parent2_id = head
-        .peel_to_commit_in_place()
-        .context("Failed to resolve worktree HEAD")?
-        .id;
 
-    let tree_id = build_tree_from_delta(repo, &parent1, worktree_path, &snapshot_delta)?;
+    let tree_id = build_tree_from_delta(repo, &parent1, &session_worktree, &snapshot_delta)?;
 
     let signature = gix::actor::SignatureRef {
         name: gix::bstr::BStr::new("agt"),
@@ -117,7 +185,14 @@ fn build_tree_from_delta(
         let (entry_kind, data) = if file_type.is_symlink() {
             let target = std::fs::read_link(&full_path)
                 .with_context(|| format!("Failed to read symlink {}", full_path.display()))?;
-            (EntryKind::Link, target.as_os_str().to_string_lossy().into_owned().into_bytes())
+            (
+                EntryKind::Link,
+                target
+                    .as_os_str()
+                    .to_string_lossy()
+                    .into_owned()
+                    .into_bytes(),
+            )
         } else {
             let mut kind = EntryKind::Blob;
             #[cfg(unix)]
@@ -159,13 +234,10 @@ fn compute_snapshot_delta(
     repo: &Repository,
     worktree: &Path,
     base_tree: &gix::Tree<'_>,
-    since_timestamp: i64,
+    since_timestamp: u64,
 ) -> Result<SnapshotDelta> {
-    let threshold = if since_timestamp <= 0 {
-        std::time::SystemTime::UNIX_EPOCH
-    } else {
-        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(since_timestamp as u64)
-    };
+    let threshold =
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(since_timestamp);
 
     let mut current_paths = HashSet::new();
     let mut changed = HashSet::new();
@@ -174,7 +246,9 @@ fn compute_snapshot_delta(
         .skip_hidden(false)
         .process_read_dir(|_depth, _path, _state, children| {
             children.retain(|entry| {
-                entry.as_ref().map_or(true, |dir_entry| dir_entry.file_name != std::ffi::OsStr::new(".git"))
+                entry.as_ref().map_or(true, |dir_entry| {
+                    dir_entry.file_name != std::ffi::OsStr::new(".git")
+                })
             });
         })
         .into_iter()
@@ -231,8 +305,8 @@ fn collect_tree_paths(
 mod tests {
     use super::{compute_snapshot_delta, path_for_tree, SnapshotDelta};
     use anyhow::Result;
-    use gix::object::tree::EntryKind;
     use gix::commit::NO_PARENT_IDS;
+    use gix::object::tree::EntryKind;
     use gix_object::Tree;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -272,9 +346,9 @@ mod tests {
             .skip_hidden(false)
             .process_read_dir(|_depth, _path, _state, children| {
                 children.retain(|entry| {
-                    entry
-                        .as_ref()
-                        .map_or(true, |dir_entry| dir_entry.file_name != std::ffi::OsStr::new(".git"))
+                    entry.as_ref().map_or(true, |dir_entry| {
+                        dir_entry.file_name != std::ffi::OsStr::new(".git")
+                    })
                 });
             })
             .into_iter()
@@ -328,10 +402,7 @@ mod tests {
         let commit = repo.head()?.peel_to_commit_in_place()?;
         let base_tree = commit.tree()?;
 
-        fs::rename(
-            tmp.path().join("dir/b.txt"),
-            tmp.path().join("dir/c.txt"),
-        )?;
+        fs::rename(tmp.path().join("dir/b.txt"), tmp.path().join("dir/c.txt"))?;
 
         let SnapshotDelta { changed, deleted } =
             compute_snapshot_delta(&repo, tmp.path(), &base_tree, 0)?;
@@ -350,10 +421,7 @@ mod tests {
         let base_tree = commit.tree()?;
 
         fs::create_dir_all(tmp.path().join("nested"))?;
-        fs::rename(
-            tmp.path().join("a.txt"),
-            tmp.path().join("nested/a.txt"),
-        )?;
+        fs::rename(tmp.path().join("a.txt"), tmp.path().join("nested/a.txt"))?;
         fs::write(tmp.path().join("nested/a.txt"), "")?;
 
         let SnapshotDelta { changed, deleted } =

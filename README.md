@@ -34,7 +34,7 @@ agt/
 
 A dual-mode Git wrapper built on [gitoxide](https://github.com/Byron/gitoxide):
 
-- **As `git`**: Drop-in replacement with filtered output (hides agent branches/commits)
+- **As `git`**: Git-like passthrough with filtered output (hides agent branches/commits); backed by the vendored `gix` CLI
 - **As `agt`**: Full visibility plus agent session management commands
 
 Key commands:
@@ -108,6 +108,8 @@ cargo test            # Run tests
 
 - Detached HEAD in agent worktrees is unsupported; autocommit expects a branch checkout.
 - Symlink cycles are ignored during filesystem scans; symlinks are not followed.
+- Symlinks are stored as symlinks; targets are captured as-is (external symlinks may be broken when checked out elsewhere).
+- In `git` mode, `git log` filtering only works with the default log format; custom pretty/oneline formats require `--disable-agt`.
 
 ## License
 

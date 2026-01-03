@@ -156,6 +156,14 @@ fn write_default_config(bare_path: &Path, config: &AgtConfig) -> Result<()> {
         contents.push('\n');
     }
 
+    // Ensure bare=true remains explicitly set (linked worktree admin dirs exist under a bare repo).
+    if contents.contains("bare = false") {
+        contents = contents.replace("bare = false", "bare = true");
+    }
+    if !contents.contains("bare = true") {
+        contents.push_str("[core]\n\tbare = true\n\n");
+    }
+
     // Only write agt section - keep repo bare
     contents.push_str("[agt]\n");
     contents.push_str(&format!("\tagentEmail = {}\n", config.agent_email));
