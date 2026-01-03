@@ -1,6 +1,6 @@
 GIX_MANIFEST = vendor/gitoxide/Cargo.toml
 
-.PHONY: build build-agt build-gix build-worktree
+.PHONY: build build-agt build-gix build-worktree clean
 
 build: build-gix build-worktree build-agt
 
@@ -12,3 +12,7 @@ build-gix:
 
 build-worktree:
 	cargo build --release -p agt-worktree
+
+clean:
+	cargo clean
+	cargo clean --manifest-path $(GIX_MANIFEST)
