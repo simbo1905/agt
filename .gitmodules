@@ -1,0 +1,3 @@
+[submodule "vendor/gitoxide"]
+	path = vendor/gitoxide
+	url = https://github.com/GitoxideLabs/gitoxide
