@@ -43,6 +43,7 @@ Key commands:
 - `agt autocommit -C <path> --session-id <id>` - Snapshot all modified files
 
 See [docs/agt.1.txt](docs/agt.1.txt) for the complete man page.
+This repo vendors gitoxide and uses its `gix` CLI for git passthrough. Worktree add/remove is handled by the `agt-worktree` helper; system Git is not used.
 
 ## Quick Start
 
@@ -89,6 +90,8 @@ This is a polyglot monorepo managed with mise. Currently includes:
 
 ```bash
 mise install          # Install all tools
+make build-gix        # Build vendored gix CLI
+make build-worktree   # Build agt-worktree helper
 cargo build           # Build all Rust crates
 cargo test            # Run tests
 ```
@@ -100,6 +103,11 @@ cargo test            # Run tests
 3. **Dual-parent commits** - Agent commits link to both agent history and user branch
 4. **Local-only agent branches** - Never pushed to remotes, only user branches sync
 5. **Timestamp-based scanning** - Fast file discovery without index manipulation
+
+## Corner Cases
+
+- Detached HEAD in agent worktrees is unsupported; autocommit expects a branch checkout.
+- Symlink cycles are ignored during filesystem scans; symlinks are not followed.
 
 ## License
 

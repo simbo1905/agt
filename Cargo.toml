@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/agt"]
+members = ["crates/agt", "crates/agt-worktree"]
 resolver = "2"
 
 [workspace.package]
@@ -10,6 +10,14 @@ license = "MIT"
 
 [workspace.dependencies]
 gix = { version = "0.68", features = ["blocking-network-client", "tree-editor"] }
+gix-object = "0.46"
+gix-path = "0.10"
+gix-index = "0.37"
+gix-worktree = "0.38"
+gix-worktree-state = "0.15"
+gix-features = "0.39"
+gix-ref = "0.49"
+gix-fs = "0.12"
 clap = { version = "4", features = ["derive"] }
 jwalk = "0.8"
 chrono = "0.4"

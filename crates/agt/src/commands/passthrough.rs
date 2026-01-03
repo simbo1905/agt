@@ -1,5 +1,7 @@
 use crate::config::AgtConfig;
+use crate::gix_cli::{find_gix_binary, repo_base_path};
 use anyhow::Result;
+use gix::Repository;
 use std::io::Write;
 use std::process;
 
@@ -8,21 +10,31 @@ pub fn run(
     _is_git_mode: bool,
     disable_filter: bool,
     config: &AgtConfig,
+    repo: &Repository,
 ) -> Result<()> {
     if args.is_empty() {
         // Show help if no git command provided
-        process::Command::new("git").arg("--help").status()?;
+        process::Command::new(find_gix_binary(&repo_base_path(repo))?)
+            .arg("--help")
+            .status()?;
         return Ok(());
     }
 
-    let output = process::Command::new("git").args(args).output()?;
+    let is_git_mode = _is_git_mode;
+    if is_git_mode && args.first().map(String::as_str) == Some("worktree") {
+        anyhow::bail!("worktree operations are disabled in git mode");
+    }
+
+    let mapped_args = map_args_for_gix(args);
+    let output = process::Command::new(find_gix_binary(&repo_base_path(repo))?)
+        .args(&mapped_args)
+        .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    let is_git_mode = _is_git_mode;
     if is_git_mode && !disable_filter {
         // Filter output based on command
-        let filtered = filter_output(&stdout, args, config);
+        let filtered = filter_output(&stdout, &mapped_args, config);
         print!("{filtered}");
     } else {
         print!("{stdout}");
@@ -35,6 +47,24 @@ pub fn run(
     }
 
     Ok(())
+}
+
+fn map_args_for_gix(args: &[String]) -> Vec<String> {
+    let mut mapped = args.to_vec();
+    match mapped.first().map(String::as_str) {
+        Some("branch") => {
+            if mapped.get(1).map(String::as_str) != Some("list") {
+                mapped.insert(1, "list".to_string());
+            }
+        }
+        Some("tag") => {
+            if mapped.get(1).map(String::as_str) != Some("list") {
+                mapped.insert(1, "list".to_string());
+            }
+        }
+        _ => {}
+    }
+    mapped
 }
 
 fn filter_output(output: &str, args: &[String], config: &AgtConfig) -> String {

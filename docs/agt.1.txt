@@ -98,6 +98,8 @@ COMMANDS
                  - Parent 1: last commit on agtsessions/<id>
                  - Parent 2: current HEAD of the worktree's tracked branch
               5. Updates the timestamp file
+              Note: The scan does not follow symlinks; symlink cycles are ignored.
+              Note: Detached HEADs in agent worktrees are not supported.
 
               Options:
                   -C <path>             Worktree path (required)
@@ -129,10 +131,14 @@ COMMANDS
               • Pending autocommits
               • Configuration summary
 
-   GIT COMMANDS (both modes)
+  GIT COMMANDS (both modes)
 
        All standard Git commands are supported. In git mode, output is filtered
-       according to agt configuration. Examples:
+       according to agt configuration. agt uses the vendored `gix` CLI for git
+       passthrough and the `agt-worktree` helper for worktree add/remove; system
+       Git is not used. Override with AGT_GIX_PATH or AGT_WORKTREE_PATH.
+
+       Examples:
 
        git branch
               Lists branches, excluding those matching agt.branchPrefix in git mode.

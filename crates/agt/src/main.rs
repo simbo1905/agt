@@ -5,6 +5,7 @@ mod cli;
 mod commands;
 mod config;
 mod filter;
+mod gix_cli;
 mod scanner;
 
 pub use cli::*;
@@ -66,7 +67,7 @@ fn main() -> Result<()> {
         Some(Commands::Status) => commands::status::run(&repo, &config),
         None => {
             // Git passthrough mode
-            commands::passthrough::run(&cli.args, is_git_mode, disable_filter, &config)
+            commands::passthrough::run(&cli.args, is_git_mode, disable_filter, &config, &repo)
         }
     }
 }

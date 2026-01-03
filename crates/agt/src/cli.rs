@@ -4,6 +4,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "agt")]
 #[command(about = "Agent Git Tool - AI agent session management with immutable snapshots")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 pub struct Cli {
     /// Disable agt filtering (git mode only)
     #[arg(long, global = true)]

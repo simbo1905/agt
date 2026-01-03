@@ -1,6 +1,8 @@
 use crate::config::AgtConfig;
+use crate::gix_cli::{find_worktree_binary, repo_base_path};
 use anyhow::{Context, Result};
 use gix::Repository;
+use gix_ref::transaction::PreviousValue;
 use std::process::Command as StdCommand;
 
 pub fn run(
@@ -25,14 +27,13 @@ pub fn run(
         None => repo.head()?.peel_to_commit_in_place()?,
     };
 
-    // 2. Create branch using git command
-    let status = StdCommand::new("git")
-        .args(["branch", &branch_name, &start_commit.id.to_string()])
-        .current_dir(repo.work_dir().unwrap())
-        .status()?;
-    if !status.success() {
-        return Err(anyhow::anyhow!("Failed to create branch {branch_name}"));
-    }
+    // 2. Create branch using gix
+    repo.reference(
+        format!("refs/heads/{branch_name}"),
+        start_commit.id,
+        PreviousValue::MustNotExist,
+        "agt fork",
+    )?;
 
     // 3. Create worktree
     let worktree_path = repo
@@ -47,15 +48,18 @@ pub fn run(
             .context("Failed to resolve sessions directory")?,
     )?;
 
-    // Use git worktree add equivalent
-    let status = StdCommand::new("git")
+    let status = StdCommand::new(find_worktree_binary(&repo_base_path(repo))?)
         .args([
-            "worktree",
             "add",
+            "--git-dir",
+            repo.common_dir().to_str().unwrap(),
+            "--worktree",
             worktree_path.to_str().unwrap(),
-            &branch_name,
+            "--name",
+            session_id,
+            "--branch",
+            &format!("refs/heads/{branch_name}"),
         ])
-        .current_dir(repo.work_dir().unwrap())
         .status()
         .context("Failed to create worktree")?;
     if !status.success() {

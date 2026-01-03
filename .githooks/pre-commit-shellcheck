@@ -1,0 +1,26 @@
+#!/bin/sh
+#
+# Pre-commit hook to ensure all shell scripts pass shellcheck for POSIX compliance
+#
+
+# Find all shell scripts changed in this commit
+FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.sh$')
+
+if [ -z "$FILES" ]; then
+  exit 0
+fi
+
+# Run shellcheck on each file
+error=0
+for file in $FILES; do
+  if [ -f "$file" ]; then
+    shellcheck --shell=sh "$file" || error=1
+  fi
+done
+
+if [ "$error" -ne 0 ]; then
+  echo "ERROR: Shellcheck failed for one or more scripts. Fix errors and re-commit." >&2
+  exit 1
+fi
+
+exit 0

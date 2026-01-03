@@ -1,4 +1,5 @@
 use crate::config::AgtConfig;
+use crate::gix_cli::{find_worktree_binary, repo_base_path};
 use anyhow::{Context, Result};
 use gix::Repository;
 use std::fs;
@@ -20,8 +21,16 @@ pub fn run(
         .join(session_id);
 
     if worktree_path.exists() {
-        let status = StdCommand::new("git")
-            .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
+        let status = StdCommand::new(find_worktree_binary(&repo_base_path(repo))?)
+            .args([
+                "remove",
+                "--git-dir",
+                repo.common_dir().to_str().unwrap(),
+                "--worktree",
+                worktree_path.to_str().unwrap(),
+                "--name",
+                session_id,
+            ])
             .current_dir(repo.work_dir().unwrap())
             .status()
             .context("Failed to remove worktree")?;
@@ -38,10 +47,8 @@ pub fn run(
     if delete_branch {
         let branch_ref = format!("refs/heads/{branch_name}");
         if repo.find_reference(&branch_ref).is_ok() {
-            StdCommand::new("git")
-                .args(["branch", "-D", &branch_name])
-                .current_dir(repo.work_dir().unwrap())
-                .status()?;
+            let branch_ref = repo.find_reference(&format!("refs/heads/{branch_name}"))?;
+            branch_ref.delete()?;
             println!("Deleted branch: {branch_name}");
         }
     }

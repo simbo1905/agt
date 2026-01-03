@@ -17,10 +17,35 @@ dependencies = [
  "chrono",
  "clap",
  "gix",
+ "gix-features",
+ "gix-fs",
+ "gix-index",
+ "gix-object",
+ "gix-path",
+ "gix-ref",
+ "gix-worktree",
+ "gix-worktree-state",
  "jwalk",
  "predicates",
  "tempfile",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "agt-worktree"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "clap",
+ "gix",
+ "gix-features",
+ "gix-fs",
+ "gix-index",
+ "gix-object",
+ "gix-worktree",
+ "gix-worktree-state",
+ "tempfile",
 ]
 
 [[package]]

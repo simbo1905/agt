@@ -8,6 +8,14 @@ description = "Agent Git Tool for AI agent session management"
 
 [dependencies]
 gix = { workspace = true }
+gix-object = { workspace = true }
+gix-path = { workspace = true }
+gix-ref = { workspace = true }
+gix-index = { workspace = true }
+gix-worktree = { workspace = true }
+gix-worktree-state = { workspace = true }
+gix-features = { workspace = true }
+gix-fs = { workspace = true }
 clap = { workspace = true }
 jwalk = { workspace = true }
 chrono = { workspace = true }
