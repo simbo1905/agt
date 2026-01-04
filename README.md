@@ -8,9 +8,20 @@ This repository contains tools for managing AI agent coding sessions with immuta
 
 - **Parallel agent workflows** - Multiple AI agents work concurrently in isolated worktrees
 - **Immutable history** - Every file modification is captured in the Git object store
-- **Sandboxing** - Designed to be compatible with sandboxing tools (e.g. `bubblewrap` (bwrap) to jail agent processes)
+- **Sandboxing Infrastructure** - Support for robust isolation via chroot jails (using [toybox](https://github.com/landley/toybox)) and VM/VPS environments
 - **Time travel** - Roll back to any point in agent history, fork from any state
 - **Transparent user experience** - When invoked as `git`, agent branches are hidden
+
+## Infrastructure & Sandboxing
+
+AGT is designed for "power developers" who need robust isolation. While it can run locally on macOS/Linux, the recommended production setup leverages **Linux VMs or VPS** environments for complete isolation ("YOLO mode").
+
+We include a custom fork of [toybox](https://github.com/simbo1905/toybox) (branch `agt-agent-sandbox`) as a submodule to facilitate creating chroot jails. This ensures agents can run untrusted code safely without compromising the host system.
+
+**Deployment Models:**
+1. **Local Linux VM** (Recommended for development): Use [Lima](https://github.com/lima-vm/lima) or similar to run AGT in a disposable Ubuntu VM.
+2. **VPS** (Recommended for production): Deploy to a cheap Linux VPS for full isolation.
+3. **Local Host** (Supported): Run directly on macOS/Linux for trusted workflows (no jail).
 
 ## Repository Structure
 
@@ -21,6 +32,8 @@ agt/
 ├── mise.toml           # Tool version management
 ├── docs/
 │   └── agt.1.txt       # Man page for agt tool
+├── vendor/
+│   └── toybox/         # toybox submodule for chroot jails
 ├── crates/
 │   ├── agt/            # Rust implementation of agt
 │   │   ├── Cargo.toml

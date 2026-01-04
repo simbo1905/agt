@@ -1,3 +1,7 @@
 [submodule "vendor/gitoxide"]
 	path = vendor/gitoxide
 	url = https://github.com/GitoxideLabs/gitoxide
+[submodule "vendor/toybox"]
+	path = vendor/toybox
+	url = https://github.com/simbo1905/toybox
+	branch = agt-agent-sandbox

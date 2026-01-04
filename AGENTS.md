@@ -18,6 +18,8 @@ This is a polyglot monorepo containing tools for AI agent session management. To
 ```
 agt/
 ├── mise.toml           # Tool versions (rust, etc.)
+├── vendor/
+│   └── toybox/         # toybox submodule for chroot jails
 ├── crates/
 │   ├── agt/            # Main Rust crate
 │   │   ├── Cargo.toml
@@ -84,23 +86,26 @@ AGT uses its own configuration files (separate from git's):
 - AGT needs to know where the real git is located
 - Clean separation: git's config is for git, AGT's config is for AGT
 
-### Sandboxing Strategy (Optional)
+### Sandboxing Strategy
 
-Rather than total security, we would like to provide guardrails, like with tools like **bubblewrap (bwrap)** or other OS level tools where available (e.g. `sandbox-exec` is deprecated on Apple but they have `chroot` for isolation):
+We prioritize robust isolation for agents to enable "YOLO mode" where agents can run untrusted code safely.
 
-1.  **Agent Spawner**: A process manager running on the host.
-    - Creates the session worktree (`agt fork`).
-    - Configures the `bwrap`/`chroot` jail.
-    - Bind-mounts `agt` as `/usr/bin/git` inside the jail.
-2.  **Inside the Jail**:
-    - The agent sees `argv[0] == "git"`.
-    - `agt` applies filtering (hides `agtsessions/` etc.).
-    - The agent works safely without seeing implementation details.
-3.  **Outside the Jail**:
-    - The spawner runs `agt autocommit` to checkpoint the session.
-    - `agt` (full mode) captures all files, bypassing `.gitignore`.
+**Key Components:**
+1.  **Infrastructure**:
+    -   **Linux VM/VPS**: The primary hosting target. We assume the ability to run a VM (e.g., via Lima) or provision a cheap VPS.
+    -   **Chroot Jails**: We use a custom fork of [toybox](https://github.com/simbo1905/toybox) (branch `agt-agent-sandbox`, vendored in `vendor/toybox`) to construct lightweight chroot jails.
+    -   **Isolation**: This allows agents to modify system files within the jail without affecting the host, and protects the host from malicious/accidental damage.
 
-We want to make the actual jail script extendable (perhaps by having `git` run `agt jail` by finding an `agt-jail` on the path to invoke it). 
+2.  **Implementation**:
+    -   **Agent Spawner**: A process manager running on the host sets up the jail.
+    -   **Jail Construction**: Uses `toybox` to create a minimal rootfs.
+    -   **Bind Mounts**: Mounts the agent worktree and `agt` binary (as `/usr/bin/git`) into the jail.
+    -   **Execution**: The agent process runs inside the jail, perceiving a clean environment.
+
+3.  **Why this approach?**
+    -   **Power Developer Focus**: We target users who are comfortable with VMs/VPS, avoiding the "black box" limitations of container-only solutions.
+    -   **Flexibility**: Allows running any tool chain that can be installed in the jail/VM.
+    -   **Scalability**: Large bare repos and aggressive agent activity are better handled in dedicated VMs than on a user's main desktop file system.
 
 ### Filtering Logic (git mode)
 
