@@ -164,10 +164,12 @@ fn checkout_tree(
         .context("Failed to build index from tree")?;
     index.set_path(admin_dir.join("index"));
 
-    let mut opts = gix_worktree_state::checkout::Options::default();
-    opts.fs = Capabilities::probe(worktree);
-    opts.destination_is_initially_empty = true;
-    opts.overwrite_existing = true;
+    let opts = gix_worktree_state::checkout::Options {
+        fs: Capabilities::probe(worktree),
+        destination_is_initially_empty: true,
+        overwrite_existing: true,
+        ..Default::default()
+    };
 
     let files = Discard;
     let bytes = Discard;

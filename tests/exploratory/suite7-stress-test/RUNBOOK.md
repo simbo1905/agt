@@ -16,7 +16,7 @@ Test agt's behavior under scale:
 
 ## Setup
 
-1. Build all binaries: `make build` (builds both `agt` and vendored `gix`)
+1. Build all binaries: `make build`
 2. Create directory: `mkdir -p .tmp/suite7 && cd .tmp/suite7`
 3. Initialize an agt-managed repo
 

@@ -16,7 +16,7 @@ Test what happens when things go wrong:
 
 ## Setup
 
-1. Build all binaries: `make build` (builds both `agt` and vendored `gix`)
+1. Build all binaries: `make build`
 2. Create directory: `mkdir -p .tmp/suite8 && cd .tmp/suite8`
 3. Initialize an agt-managed repo
 

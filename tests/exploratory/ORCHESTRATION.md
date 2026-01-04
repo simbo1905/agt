@@ -27,7 +27,7 @@ Before assigning agents:
    ```bash
    make build
    ```
-   This builds `agt`, `agt-worktree`, and the vendored `gix` CLI.
+   This builds `agt` and `agt-worktree` to `dist/`.
 
 2. **Create working directories**:
    ```bash
@@ -35,8 +35,7 @@ Before assigning agents:
    ```
 
 3. **Ensure each agent can access**:
-   - The `agt` binary (at `target/release/agt`)
-   - The vendored `gix` binary (at `vendor/gitoxide/target/release/gix`)
+   - The `agt` binary (at `dist/agt`)
    - Their assigned `.tmp/suiteN` directory
    - The documentation (`docs/agt.1.txt`)
    - Their suite runbook (`tests/exploratory/suiteN-*/RUNBOOK.md`)

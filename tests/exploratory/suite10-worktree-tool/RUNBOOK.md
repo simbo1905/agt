@@ -2,7 +2,7 @@
 
 ## Objective
 
-Verify the gix-based `agt-worktree` helper can create and remove linked worktrees
+Verify the `agt-worktree` helper can create and remove linked worktrees
 for a bare repository in the vanilla case.
 
 ## Working Directory
@@ -12,9 +12,7 @@ for a bare repository in the vanilla case.
 ## Setup
 
 1. Build binaries:
-   - `make build-gix`
-   - `make build-worktree`
-   - `cargo build --release -p agt`
+   - `make build`
 2. Create directory: `mkdir -p .tmp/suite10 && cd .tmp/suite10`
 
 ## Scenario 10.1: Add Worktree (Bare Repo)

@@ -221,7 +221,7 @@ Profile agt performance.
 
 **Focus**:
 - Time spent in file scanning (jwalk)
-- Time spent in git operations (gix)
+- Time spent in git operations (real git passthrough)
 - Memory allocation patterns
 - I/O patterns
 

@@ -6,7 +6,7 @@ This document provides guidance for AI coding agents working on the AGT monorepo
 
 This is a polyglot monorepo containing tools for AI agent session management. Tool versions are managed with [mise](https://mise.jdx.dev/).
 
-**Primary deliverable**: The `agt` binary - a Rust tool built on gitoxide.
+**Primary deliverable**: The `agt` binary - a Rust tool that wraps the real git binary.
 
 ## Documentation as Target State
 
@@ -19,20 +19,21 @@ This is a polyglot monorepo containing tools for AI agent session management. To
 agt/
 ├── mise.toml           # Tool versions (rust, etc.)
 ├── crates/
-│   └── agt/            # Main Rust crate
-│       ├── Cargo.toml
-│       └── src/
-│           ├── main.rs
-│           ├── cli.rs        # Command-line parsing (clap)
-│           ├── config.rs     # Git config reading ([agt] section)
-│           ├── filter.rs     # Branch/commit filtering logic
-│           ├── commands/
-│           │   ├── mod.rs
-│           │   ├── init.rs       # agt init
-│           │   ├── fork.rs       # agt fork
-│           │   ├── autocommit.rs # agt autocommit
-│           │   └── passthrough.rs # git command passthrough
-│           └── scanner.rs    # Timestamp-based file scanning
+│   ├── agt/            # Main Rust crate
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── main.rs
+│   │       ├── cli.rs        # Command-line parsing (clap)
+│   │       ├── config.rs     # AGT config reading (~/.agtconfig, .agt/config)
+│   │       ├── filter.rs     # Branch/commit filtering logic
+│   │       ├── commands/
+│   │       │   ├── mod.rs
+│   │       │   ├── init.rs       # agt init
+│   │       │   ├── fork.rs       # agt fork
+│   │       │   ├── autocommit.rs # agt autocommit
+│   │       │   └── passthrough.rs # git command passthrough
+│   │       └── scanner.rs    # Timestamp-based file scanning
+│   └── agt-worktree/   # Worktree helper binary
 └── docs/
     └── agt.1.txt       # Man page (specification)
 ```
@@ -42,23 +43,46 @@ agt/
 ### Dual-Mode Binary
 
 The binary checks `argv[0]` to determine mode:
-- Invoked as `git` → filter mode (hide agent branches/commits)
+- Invoked as `git` → filter mode (spawn real git, filter stdout)
 - Invoked as `agt` → full mode (show everything + extra commands)
 
 This is similar to how busybox works.
 
+### Real Git Passthrough
+
+When invoked as `git`, AGT:
+1. Reads `agt.gitPath` from config to find the real git binary
+2. Spawns the real git with all command-line arguments
+3. Filters stdout line-by-line to hide agent branches/commits
+4. Passes stderr through unmodified
+
+This provides **full git compatibility** - every git command works.
+
 ### Configuration
 
-Read from git config files (global `~/.gitconfig` or local `.git/config`):
+AGT uses its own configuration files (separate from git's):
+
+**Global config**: `~/.agtconfig`
+**Local config**: `.agt/config` (in repository root)
 
 ```ini
 [agt]
+    gitPath = /opt/git/bin/git
     agentEmail = agt.opencode@local
     branchPrefix = agtsessions/
     userEmail = simon@example.com
 ```
 
-Use gitoxide's config APIs to read these.
+**Required settings:**
+- `agt.gitPath` - Path to the real git binary (should NOT be on PATH)
+- `agt.agentEmail` - Email for agent commits (filtered in git mode)
+- `agt.branchPrefix` - Prefix for agent branches (default: `agtsessions/`)
+
+### Why Separate Config Files?
+
+- Real git is not on PATH to prevent users from accidentally bypassing AGT
+- AGT needs to know where the real git is located
+- Clean separation: git's config is for git, AGT's config is for AGT
 
 ### Sandboxing Strategy (Optional)
 
@@ -80,10 +104,10 @@ We want to make the actual jail script extendable (perhaps by having `git` run `
 
 ### Filtering Logic (git mode)
 
-When output would show branches, tags, or commits:
-1. Exclude refs matching `agt.branchPrefix` (e.g., `agtsessions/*`)
+When spawning git and reading its stdout:
+1. Exclude lines showing refs matching `agt.branchPrefix` (e.g., `agtsessions/*`)
 2. Exclude commits where author email matches `agt.agentEmail`
-3. The `--disable-agt` flag bypasses all filtering
+3. The `--disable-agt` flag bypasses all filtering (spawns git directly without filtering)
 
 ### Commands
 
@@ -91,8 +115,9 @@ When output would show branches, tags, or commits:
 1. Clone remote as bare repo: `<name>.git`
 2. Create adjacent worktree: `<name>/`
 3. The worktree's `.git` is a file pointing to `../<name>.git`
-4. Initialise `.git/agt/` directory structure
-5. See: https://gist.github.com/simbo1905/22accc8dc39583672aa6f0483a800429
+4. Create `.agt/config` with default settings
+5. Initialise `.git/agt/` directory structure
+6. See: https://gist.github.com/simbo1905/22accc8dc39583672aa6f0483a800429
 
 **`agt fork --session-id <id>`**
 1. Create branch `agtsessions/<id>` from current HEAD (or `--from`)
@@ -117,7 +142,7 @@ When output would show branches, tags, or commits:
 
 ### Exploratory Test Suites
 
-The `tests/exploratory/` directory contains 9 core test suites designed for parallel execution by AI agents. Key requirements:
+The `tests/exploratory/` directory contains test suites designed for parallel execution by AI agents. Key requirements:
 1. **Isolation**: Each suite runs in `.tmp/suiteN` with a dedicated git config (see `ORCHESTRATION.md`).
 2. **Determinism**: Use `--timestamp` for autocommit tests to override mtime.
 3. **Documentation as Spec**: **Suite 9** verifies every claim in `docs/agt.1.txt`. Mismatches are bugs.
@@ -131,7 +156,7 @@ Agents should:
 ## Dependencies
 
 Primary Rust crates:
-- `gix` (gitoxide) - Git operations
+- `gix` (gitoxide) - Git object/tree operations
 - `clap` - CLI parsing
 - `jwalk` or `walkdir` - Fast filesystem traversal
 - `chrono` - Timestamp handling
@@ -140,14 +165,15 @@ Primary Rust crates:
 ## Build Commands
 
 ```bash
-# Build
-cargo build --release
+# Build all binaries
+make build
 
 # Test
 cargo test
 
-# Install locally
-cargo install --path crates/agt
+# Binaries are in dist/
+ls dist/
+# agt  agt-worktree
 ```
 
 ## Important Notes
@@ -156,6 +182,7 @@ cargo install --path crates/agt
 2. **Timestamps must be overridable for testing** - use `--timestamp` flag
 3. **Worktrees share the object store** - this is Git's built-in concurrency handling
 4. **Agent branches are local-only** - configure refspecs to prevent pushing
+5. **Real git passthrough** - AGT spawns real git for full compatibility
 
 ## Reference Documentation
 

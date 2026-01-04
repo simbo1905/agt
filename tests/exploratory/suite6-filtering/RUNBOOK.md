@@ -13,13 +13,17 @@ Verify the core dual-mode behavior:
 
 ## Setup
 
-1. Build all binaries: `make build` (builds both `agt` and vendored `gix`)
+1. Build all binaries: `make build`
 2. Create directory: `mkdir -p .tmp/suite6 && cd .tmp/suite6`
 3. Create a symlink for git-mode testing:
    ```bash
-   ln -s $(pwd)/../../target/release/agt ./git
+   ln -s $(pwd)/../../dist/agt ./git
    ```
-4. Initialize an agt-managed repo
+4. Configure `AGT_GIT_PATH` to point to the real git binary:
+   ```bash
+   export AGT_GIT_PATH=/usr/bin/git
+   ```
+5. Initialize an agt-managed repo
 
 ## Reference
 
@@ -31,37 +35,34 @@ Read `docs/agt.1.txt`:
 
 ## Scenarios
 
-### Scenario 6.0: Passthrough Uses Vendored gix
+### Scenario 6.0: Passthrough Uses Real Git
 
-Verify that git-mode passthrough is using the vendored `gix` binary, not system Git.
+Verify that git-mode passthrough is using the real git binary.
 
 Steps:
-1. Ensure `gix` is built: `make build-gix`
-2. Optionally set `AGT_GIX_PATH` to the built binary path
-3. Run `./git --version`
-4. Confirm output mentions `gix` and does NOT mention "Apple Git"
+1. Set `AGT_GIT_PATH` to the system git binary path
+2. Run `./git --version`
+3. Confirm output shows the system git version (e.g., "git version 2.x.x")
 
-Success: `./git --version` reports gix (not system Git)
+Success: `./git --version` reports real git version
 
-### Scenario 6.0b: Chroot/Namespace Isolation Uses Vendored gix (Linux/macOS)
+### Scenario 6.0b: Sandbox Isolation (Linux/macOS)
 
-Verify that isolation hides system Git and still allows agt passthrough via vendored `gix`.
+Verify that isolation works with the real git binary.
 
 Steps (Linux + bwrap):
-1. Build `gix`: `make build-gix`
-2. Use bwrap to create a minimal root with `agt` and `gix` only
-3. Ensure `/usr/bin/git` does NOT exist in the jail
-4. Run `./git --version` inside the jail
-5. Confirm output mentions gix (not system Git)
+1. Use bwrap to create a minimal root with `agt` and system `git` only
+2. Set `AGT_GIT_PATH` to point to git inside the jail
+3. Run `./git --version` inside the jail
+4. Confirm output shows git version
 
 Steps (macOS + chroot):
-1. Build `gix`: `make build-gix`
-2. Create a minimal chroot with `agt` and `gix` binaries
-3. Ensure `/usr/bin/git` is absent in the chroot
-4. Run `./git --version` inside the chroot
-5. Confirm output mentions gix (not system Git)
+1. Create a minimal chroot with `agt` and `git` binaries
+2. Set `AGT_GIT_PATH` appropriately
+3. Run `./git --version` inside the chroot
+4. Confirm output shows git version
 
-Success: With system Git hidden, git-mode passthrough still works via vendored gix
+Success: Passthrough works correctly in isolated environment
 
 ### Scenario 6.1: Configure Filtering
 

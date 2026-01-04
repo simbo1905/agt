@@ -10,7 +10,7 @@ Verify that the tool behaves EXACTLY as documented in `docs/agt.1.txt`. If there
 
 ## Setup
 
-1. Build all binaries: `make build` (builds both `agt` and vendored `gix`)
+1. Build all binaries: `make build`
 2. Create directory: `mkdir -p .tmp/suite9 && cd .tmp/suite9`
 3. Have `docs/agt.1.txt` open for reference
 
@@ -70,12 +70,12 @@ Verify:
 
 ### Section: GIT COMMANDS
 
-> agt uses the vendored `gix` CLI for all Git operations; system Git is not used.
+> When invoked as 'git', agt spawns the real git binary and filters its stdout.
 
 Verify:
-- [ ] `./git --version` (via symlink) shows gix version, not system Git
-- [ ] AGT_GIX_PATH environment variable can override gix location
-- [ ] Git commands work without system Git installed (in isolated environment)
+- [ ] `./git --version` (via symlink) shows system git version
+- [ ] AGT_GIT_PATH environment variable can override git location
+- [ ] Git commands work via passthrough with filtering
 
 ### Section: CONFIGURATION
 

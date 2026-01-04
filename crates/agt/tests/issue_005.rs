@@ -6,7 +6,6 @@ use gix_object::Tree;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
 use tempfile::TempDir;
 
 // --- Copied Helpers ---
@@ -27,12 +26,17 @@ fn git_mode_cmd(tmp: &TempDir) -> Result<AgtCommand, Box<dyn std::error::Error>>
             fs::set_permissions(&git_path, perms)?;
         }
     }
-    Ok(AgtCommand::new(git_path))
+    let mut cmd = AgtCommand::new(git_path);
+    // In git mode, AGT spawns the real git and filters output
+    cmd.env("AGT_GIT_PATH", find_real_git()?);
+    cmd.env("AGT_WORKTREE_PATH", ensure_worktree_tool()?);
+    Ok(cmd)
 }
 
 struct TestRepo {
     tmp: TempDir,
     worktree: PathBuf,
+    #[allow(dead_code)]
     bare: PathBuf,
 }
 
@@ -85,54 +89,34 @@ fn ensure_worktree_tool() -> Result<PathBuf, Box<dyn std::error::Error>> {
     }
 }
 
-fn ensure_gix() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    static GIX_PATH: OnceLock<PathBuf> = OnceLock::new();
-    if let Some(path) = GIX_PATH.get() {
-        return Ok(path.to_path_buf());
-    }
-    let path = find_or_build_gix()?;
-    let _ = GIX_PATH.set(path.clone());
-    Ok(path)
-}
-
-fn find_or_build_gix() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Ok(path) = std::env::var("AGT_GIX_PATH") {
-        let candidate = PathBuf::from(path);
+fn find_real_git() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    // Check AGT_GIT_PATH env var first
+    if let Ok(path) = std::env::var("AGT_GIT_PATH") {
+        let candidate = PathBuf::from(&path);
         if candidate.exists() {
             return Ok(candidate);
         }
     }
-    let root = repo_root();
-    let exe_suffix = std::env::consts::EXE_SUFFIX;
-    let gix_name = format!("gix{exe_suffix}");
-    let release = root.join("vendor/gitoxide/target/release").join(&gix_name);
-    let debug = root.join("vendor/gitoxide/target/debug").join(&gix_name);
 
-    if release.exists() {
-        return Ok(release);
-    }
-    if debug.exists() {
-        return Ok(debug);
+    // Find git in PATH
+    let output = Command::new("which")
+        .arg("git")
+        .output()?;
+    
+    if output.status.success() {
+        let path = String::from_utf8(output.stdout)?.trim().to_string();
+        return Ok(PathBuf::from(path));
     }
 
-    let status = Command::new("cargo")
-        .args([
-            "build",
-            "--manifest-path",
-            root.join("vendor/gitoxide/Cargo.toml").to_str().unwrap(),
-            "-p",
-            "gitoxide",
-            "--release",
-        ])
-        .status()?;
-    if !status.success() {
-        return Err("failed to build vendored gix".into());
+    // Fallback locations
+    for path in ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"] {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return Ok(p);
+        }
     }
-    if release.exists() {
-        Ok(release)
-    } else {
-        Err("vendored gix binary not found after build".into())
-    }
+
+    Err("Could not find git binary".into())
 }
 
 fn init_bare_repo_with_commit(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -216,7 +200,6 @@ fn test_git_add_all_respects_gitignore() -> Result<(), Box<dyn std::error::Error
     // git add -A
     git_mode_cmd(repo.tmp())?
         .args(["add", "-A"])
-        .env("AGT_GIX_PATH", ensure_gix()?)
         .current_dir(worktree)
         .assert()
         .success();
@@ -224,7 +207,6 @@ fn test_git_add_all_respects_gitignore() -> Result<(), Box<dyn std::error::Error
     // Commit
     git_mode_cmd(repo.tmp())?
         .args(["commit", "-m", "add all"])
-        .env("AGT_GIX_PATH", ensure_gix()?)
         .current_dir(worktree)
         .assert()
         .success();
@@ -261,14 +243,12 @@ fn test_git_add_all_stages_tracked_modifications() -> Result<(), Box<dyn std::er
 
     git_mode_cmd(repo.tmp())?
         .args(["add", "-A"])
-        .env("AGT_GIX_PATH", ensure_gix()?)
         .current_dir(worktree)
         .assert()
         .success();
 
     git_mode_cmd(repo.tmp())?
         .args(["commit", "-m", "update tracked file"])
-        .env("AGT_GIX_PATH", ensure_gix()?)
         .current_dir(worktree)
         .assert()
         .success();
@@ -294,14 +274,12 @@ fn test_git_commit_multiple_messages() -> Result<(), Box<dyn std::error::Error>>
 
     git_mode_cmd(repo.tmp())?
         .args(["add", "file.txt"])
-        .env("AGT_GIX_PATH", ensure_gix()?)
         .current_dir(worktree)
         .assert()
         .success();
 
     git_mode_cmd(repo.tmp())?
         .args(["commit", "-m", "Title", "-m", "Body paragraph"])
-        .env("AGT_GIX_PATH", ensure_gix()?)
         .current_dir(worktree)
         .assert()
         .success();

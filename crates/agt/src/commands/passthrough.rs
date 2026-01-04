@@ -1,10 +1,10 @@
 use crate::commands::git_porcelain;
 use crate::config::AgtConfig;
-use crate::gix_cli::{find_gix_binary, repo_base_path};
+use crate::gix_cli::find_git_binary;
 use anyhow::Result;
 use gix::Repository;
-use std::io::Write;
-use std::process;
+use std::io::{BufRead, BufReader};
+use std::process::{self, Command, Stdio};
 
 pub fn run(
     args: &[String],
@@ -15,7 +15,7 @@ pub fn run(
 ) -> Result<()> {
     if args.is_empty() {
         // Show help if no git command provided
-        process::Command::new(find_gix_binary(&repo_base_path(repo))?)
+        Command::new(find_git_binary()?)
             .arg("--help")
             .status()?;
         return Ok(());
@@ -30,96 +30,66 @@ pub fn run(
         return Ok(());
     }
 
-    if is_git_mode && !disable_filter && args.first().map(String::as_str) == Some("log") {
-        if args
+    if is_git_mode
+        && !disable_filter
+        && args.first().map(String::as_str) == Some("log")
+        && args
             .iter()
             .any(|a| a == "--oneline" || a.starts_with("--pretty") || a.starts_with("--format"))
-        {
-            anyhow::bail!(
-                "git log filtering is only supported for the default log format; rerun without custom formatting or use --disable-agt"
-            );
-        }
+    {
+        anyhow::bail!(
+            "git log filtering is only supported for the default log format; rerun without custom formatting or use --disable-agt"
+        );
     }
 
-    let mapped_args = map_args_for_gix(args);
-    let output = process::Command::new(find_gix_binary(&repo_base_path(repo))?)
-        .args(&mapped_args)
-        .output()?;
+    let git_binary = find_git_binary()?;
+    let cmd_name = args.first().map(String::as_str).unwrap_or("");
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Spawn git with stdout piped for filtering, stderr inherited
+    let mut child = Command::new(&git_binary)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+
+    let stdout = child.stdout.take().unwrap();
+    let reader = BufReader::new(stdout);
 
     if is_git_mode && !disable_filter {
-        // Filter output based on command
-        let filtered = filter_output(&stdout, &mapped_args, config);
-        print!("{filtered}");
+        // Line-by-line filtering for commands that need it
+        match cmd_name {
+            "branch" | "tag" => {
+                for line in reader.lines() {
+                    let line = line?;
+                    if !has_branch_prefix(&line, &config.branch_prefix) {
+                        println!("{}", line);
+                    } else if debug_enabled() {
+                        eprintln!("[agt] filtered {} line: {}", cmd_name, line);
+                    }
+                }
+            }
+            "log" => {
+                // For log, we need to buffer blocks since commits span multiple lines
+                let output: String = reader.lines().collect::<Result<Vec<_>, _>>()?.join("\n");
+                let filtered = filter_log_output(&output, config);
+                print!("{}", filtered);
+            }
+            _ => {
+                // No filtering for other commands
+                for line in reader.lines() {
+                    println!("{}", line?);
+                }
+            }
+        }
     } else {
-        print!("{stdout}");
-    }
-
-    std::io::stderr().write_all(&output.stderr)?;
-
-    if let Some(code) = output.status.code() {
-        process::exit(code);
-    }
-
-    Ok(())
-}
-
-fn map_args_for_gix(args: &[String]) -> Vec<String> {
-    let mut mapped = args.to_vec();
-    match mapped.first().map(String::as_str) {
-        Some("branch") => {
-            if mapped.get(1).map(String::as_str) != Some("list") {
-                mapped.insert(1, "list".to_string());
-            }
+        // No filtering - just pass through
+        for line in reader.lines() {
+            println!("{}", line?);
         }
-        Some("tag") => {
-            if mapped.get(1).map(String::as_str) != Some("list") {
-                mapped.insert(1, "list".to_string());
-            }
-        }
-        _ => {}
     }
-    mapped
-}
 
-fn filter_output(output: &str, args: &[String], config: &AgtConfig) -> String {
-    let cmd = args.first().map_or("", std::string::String::as_str);
-
-    match cmd {
-        "branch" => filter_branch_output(output, config),
-        "tag" => filter_tag_output(output, config),
-        "log" => filter_log_output(output, config),
-        _ => output.to_string(),
-    }
-}
-
-fn filter_branch_output(output: &str, config: &AgtConfig) -> String {
-    output
-        .lines()
-        .filter(|line| {
-            let hide = has_branch_prefix(line, &config.branch_prefix);
-            if hide && debug_enabled() {
-                eprintln!("[agt] filtered branch line: {line}");
-            }
-            !hide
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn filter_tag_output(output: &str, config: &AgtConfig) -> String {
-    output
-        .lines()
-        .filter(|line| {
-            let hide = has_branch_prefix(line, &config.branch_prefix);
-            if hide && debug_enabled() {
-                eprintln!("[agt] filtered tag line: {line}");
-            }
-            !hide
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    let status = child.wait()?;
+    process::exit(status.code().unwrap_or(1));
 }
 
 fn filter_log_output(output: &str, config: &AgtConfig) -> String {

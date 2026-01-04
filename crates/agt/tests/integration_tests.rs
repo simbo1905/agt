@@ -5,17 +5,16 @@ use gix_object::Tree;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
 use tempfile::TempDir;
 
 fn agt_bin() -> PathBuf {
     assert_cmd::cargo::cargo_bin!("agt").to_path_buf()
 }
 
-fn agt_cmd_with_gix() -> Result<AgtCommand, Box<dyn std::error::Error>> {
+fn agt_cmd_with_git() -> Result<AgtCommand, Box<dyn std::error::Error>> {
     let mut cmd = AgtCommand::new(agt_bin());
-    let gix_path = ensure_gix()?;
-    cmd.env("AGT_GIX_PATH", gix_path);
+    // Point to real git binary for any passthrough operations
+    cmd.env("AGT_GIT_PATH", find_real_git()?);
     cmd.env("AGT_WORKTREE_PATH", ensure_worktree_tool()?);
     Ok(cmd)
 }
@@ -32,33 +31,38 @@ fn git_mode_cmd(tmp: &TempDir) -> Result<AgtCommand, Box<dyn std::error::Error>>
             fs::set_permissions(&git_path, perms)?;
         }
     }
-    Ok(AgtCommand::new(git_path))
+    let mut cmd = AgtCommand::new(git_path);
+    // In git mode, AGT spawns the real git and filters output
+    cmd.env("AGT_GIT_PATH", find_real_git()?);
+    cmd.env("AGT_WORKTREE_PATH", ensure_worktree_tool()?);
+    Ok(cmd)
 }
 
 #[cfg(unix)]
 #[test]
-fn test_passthrough_uses_gix_path() -> Result<(), Box<dyn std::error::Error>> {
+fn test_passthrough_uses_git_path() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = TempDir::new()?;
     gix::init(tmp.path())?;
 
-    let gix_path = tmp.path().join("gix");
-    fs::write(&gix_path, "#!/bin/sh\necho GIX-SENTINEL\n")?;
+    // Create a mock git that outputs a sentinel
+    let mock_git_path = tmp.path().join("mock-git");
+    fs::write(&mock_git_path, "#!/bin/sh\necho GIT-SENTINEL\n")?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&gix_path)?.permissions();
+        let mut perms = fs::metadata(&mock_git_path)?.permissions();
         perms.set_mode(0o755);
-        fs::set_permissions(&gix_path, perms)?;
+        fs::set_permissions(&mock_git_path, perms)?;
     }
 
     let output = git_mode_cmd(&tmp)?
         .args(["branch"])
-        .env("AGT_GIX_PATH", &gix_path)
+        .env("AGT_GIT_PATH", &mock_git_path)
         .current_dir(tmp.path())
         .output()?;
 
     let stdout = String::from_utf8(output.stdout)?;
-    assert!(stdout.contains("GIX-SENTINEL"));
+    assert!(stdout.contains("GIT-SENTINEL"));
 
     Ok(())
 }
@@ -76,7 +80,7 @@ fn test_init_creates_bare_repo() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&target)?;
 
     // Test agt init
-    agt_cmd_with_gix()?
+    agt_cmd_with_git()?
         .args(["init", source.to_str().unwrap()])
         .current_dir(&target)
         .assert()
@@ -120,21 +124,23 @@ fn test_init_sets_default_config_and_worktree() -> Result<(), Box<dyn std::error
     let target = tmp.path().join("target");
     fs::create_dir_all(&target)?;
 
-    agt_cmd_with_gix()?
+    agt_cmd_with_git()?
         .args(["init", source.to_str().unwrap()])
         .current_dir(&target)
         .assert()
         .success();
 
-    let config_path = target.join("source.git/config");
+    let config_path = target.join("source/.agt/config");
     let config_contents = fs::read_to_string(&config_path)?;
     // Verify agt config is set
     assert!(config_contents.contains("[agt]"));
     assert!(config_contents.contains("agentEmail = agt@local"));
     assert!(config_contents.contains("branchPrefix = agtsessions/"));
-    // Repo should remain bare (no bare=false or worktree setting)
-    assert!(config_contents.contains("bare = true"));
-    assert!(!config_contents.contains("bare = false"));
+
+    // Verify bare repo does not have bare=false (remains bare)
+    let bare_config_path = target.join("source.git/config");
+    let bare_config_contents = fs::read_to_string(&bare_config_path)?;
+    assert!(!bare_config_contents.contains("bare = false"));
 
     // Verify worktree is usable (gix can open it and sees work_dir)
     let worktree = target.join("source");
@@ -149,7 +155,7 @@ fn test_fork_creates_branch_and_worktree() -> Result<(), Box<dyn std::error::Err
     let repo = setup_basic_repo()?;
 
     // Test agt fork
-    agt_cmd_with_gix()?
+    agt_cmd_with_git()?
         .args(["fork", "--session-id", "test-session"])
         .current_dir(repo.worktree())
         .assert()
@@ -190,7 +196,7 @@ fn test_autocommit_with_timestamp_override() -> Result<(), Box<dyn std::error::E
         .as_secs() as i64;
 
     // Test agt autocommit with timestamp override
-    agt_cmd_with_gix()?
+    agt_cmd_with_git()?
         .args([
             "autocommit",
             "-C",
@@ -224,7 +230,7 @@ fn test_autocommit_dry_run_output_includes_worktree() -> Result<(), Box<dyn std:
     let session_path = repo.worktree().join("sessions/test-session");
     fs::write(session_path.join("dryrun.txt"), "x")?;
 
-    let output = agt_cmd_with_gix()?
+    let output = agt_cmd_with_git()?
         .args([
             "autocommit",
             "-C",
@@ -254,7 +260,7 @@ fn test_autocommit_parent2_is_user_branch_head() -> Result<(), Box<dyn std::erro
     let session_path = repo.worktree().join("sessions/test-session");
     fs::write(session_path.join("p2.txt"), "p2")?;
 
-    agt_cmd_with_gix()?
+    agt_cmd_with_git()?
         .args([
             "autocommit",
             "-C",
@@ -270,7 +276,7 @@ fn test_autocommit_parent2_is_user_branch_head() -> Result<(), Box<dyn std::erro
 
     // A second autocommit ensures parent1 differs from parent2 after the agent branch advances.
     fs::write(session_path.join("p2b.txt"), "p2b")?;
-    agt_cmd_with_gix()?
+    agt_cmd_with_git()?
         .args([
             "autocommit",
             "-C",
@@ -304,7 +310,7 @@ fn test_autocommit_records_deletions() -> Result<(), Box<dyn std::error::Error>>
 
     fs::write(session_path.join("delete-me.txt"), "to be deleted")?;
 
-    agt_cmd_with_gix()?
+    agt_cmd_with_git()?
         .args([
             "autocommit",
             "-C",
@@ -320,7 +326,7 @@ fn test_autocommit_records_deletions() -> Result<(), Box<dyn std::error::Error>>
 
     fs::remove_file(session_path.join("delete-me.txt"))?;
 
-    agt_cmd_with_gix()?
+    agt_cmd_with_git()?
         .args([
             "autocommit",
             "-C",
@@ -354,7 +360,7 @@ fn test_autocommit_preserves_symlink_entries() -> Result<(), Box<dyn std::error:
     #[cfg(unix)]
     std::os::unix::fs::symlink("target.txt", session_path.join("link.txt"))?;
 
-    agt_cmd_with_gix()?
+    agt_cmd_with_git()?
         .args([
             "autocommit",
             "-C",
@@ -386,7 +392,6 @@ fn test_git_mode_filters_branches() -> Result<(), Box<dyn std::error::Error>> {
     // Test git branch command (should filter agent branches)
     let output = git_mode_cmd(repo.tmp())?
         .args(["branch"])
-        .env("AGT_GIX_PATH", ensure_gix()?)
         .current_dir(repo.worktree())
         .output()?;
 
@@ -405,14 +410,12 @@ fn test_git_mode_add_and_commit() -> Result<(), Box<dyn std::error::Error>> {
 
     git_mode_cmd(repo.tmp())?
         .args(["add", "git-add.txt"])
-        .env("AGT_GIX_PATH", ensure_gix()?)
         .current_dir(worktree)
         .assert()
         .success();
 
     git_mode_cmd(repo.tmp())?
         .args(["commit", "-m", "add via git mode"])
-        .env("AGT_GIX_PATH", ensure_gix()?)
         .current_dir(worktree)
         .assert()
         .success();
@@ -432,7 +435,7 @@ fn test_agt_mode_shows_all_branches() -> Result<(), Box<dyn std::error::Error>> 
     let repo = setup_repo_with_agent_branch()?;
 
     // Test agt branch command (should show all branches)
-    let output = agt_cmd_with_gix()?
+    let output = agt_cmd_with_git()?
         .args(["branch", "-a"])
         .current_dir(repo.worktree())
         .output()?;
@@ -495,7 +498,7 @@ fn setup_repo_with_session() -> Result<TestRepo, Box<dyn std::error::Error>> {
     write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
 
     // Create session
-    agt_cmd_with_gix()?
+    agt_cmd_with_git()?
         .args(["fork", "--session-id", "test-session"])
         .current_dir(repo.worktree())
         .assert()
@@ -662,16 +665,34 @@ fn repo_root() -> PathBuf {
         .expect("failed to resolve repo root")
 }
 
-fn ensure_gix() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    static GIX_PATH: OnceLock<PathBuf> = OnceLock::new();
-
-    if let Some(path) = GIX_PATH.get() {
-        return Ok(path.to_path_buf());
+fn find_real_git() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    // Check AGT_GIT_PATH env var first
+    if let Ok(path) = std::env::var("AGT_GIT_PATH") {
+        let candidate = PathBuf::from(&path);
+        if candidate.exists() {
+            return Ok(candidate);
+        }
     }
 
-    let path = find_or_build_gix()?;
-    let _ = GIX_PATH.set(path.clone());
-    Ok(path)
+    // Find git in PATH
+    let output = Command::new("which")
+        .arg("git")
+        .output()?;
+    
+    if output.status.success() {
+        let path = String::from_utf8(output.stdout)?.trim().to_string();
+        return Ok(PathBuf::from(path));
+    }
+
+    // Fallback locations
+    for path in ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"] {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return Ok(p);
+        }
+    }
+
+    Err("Could not find git binary".into())
 }
 
 fn ensure_worktree_tool() -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -701,47 +722,5 @@ fn ensure_worktree_tool() -> Result<PathBuf, Box<dyn std::error::Error>> {
         Ok(release)
     } else {
         Err("agt-worktree binary not found after build".into())
-    }
-}
-
-fn find_or_build_gix() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Ok(path) = std::env::var("AGT_GIX_PATH") {
-        let candidate = PathBuf::from(path);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
-    }
-
-    let root = repo_root();
-    let exe_suffix = std::env::consts::EXE_SUFFIX;
-    let gix_name = format!("gix{exe_suffix}");
-    let release = root.join("vendor/gitoxide/target/release").join(&gix_name);
-    let debug = root.join("vendor/gitoxide/target/debug").join(&gix_name);
-
-    if release.exists() {
-        return Ok(release);
-    }
-    if debug.exists() {
-        return Ok(debug);
-    }
-
-    let status = Command::new("cargo")
-        .args([
-            "build",
-            "--manifest-path",
-            root.join("vendor/gitoxide/Cargo.toml").to_str().unwrap(),
-            "-p",
-            "gix",
-            "--release",
-        ])
-        .status()?;
-    if !status.success() {
-        return Err("failed to build vendored gix".into());
-    }
-
-    if release.exists() {
-        Ok(release)
-    } else {
-        Err("vendored gix binary not found after build".into())
     }
 }

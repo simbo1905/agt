@@ -1,10 +1,10 @@
-# Suite 1: Git Passthrough Kata - Basic `gix` Operations
+# Suite 1: Git Passthrough Kata - Basic Git Operations
 
 ## Objective
 
-Verify that invoking `agt` as `git` reliably delegates to the vendored `gix` CLI (not system git), and that a minimal set of Git-like commands works as documented.
+Verify that invoking `agt` as `git` reliably spawns the real git binary and filters its output to hide agent branches/commits. Verify that a set of Git commands works as expected.
 
-Note: This suite does **not** assert full `git(1)` compatibility. `gix` is not feature-complete.
+This suite tests full `git(1)` compatibility since we now spawn the real git binary.
 
 ## Working Directory
 
@@ -12,39 +12,40 @@ Note: This suite does **not** assert full `git(1)` compatibility. `gix` is not f
 
 ## Setup
 
-1. Build all binaries: `make build` (builds both `agt` and vendored `gix`)
+1. Build all binaries: `make build`
 2. Create working directory: `mkdir -p .tmp/suite1 && cd .tmp/suite1`
-3. Create a symlink or alias so `agt` can be invoked as `git`:
-   - Option A: `ln -s $(pwd)/target/release/agt ./git` and use `./git`
+3. Create a symlink so `agt` can be invoked as `git`:
+   - Option A: `ln -s $(pwd)/dist/agt ./git` and use `./git`
    - Option B: Just test with `agt` directly (it should pass through)
+4. Configure `AGT_GIT_PATH` to point to the real git binary:
+   - `export AGT_GIT_PATH=/usr/bin/git` (or wherever git is installed)
 
-Note: When invoked as `git`, agt delegates to the vendored `gix` CLI, not system Git.
-This ensures consistent behavior. Verify with `./git --version` which should mention `gix`.
+Note: When invoked as `git`, agt spawns the real git binary and filters its stdout.
 
 ## Reference
 
 Read `docs/agt.1.txt` - specifically:
 - "GIT COMMANDS (both modes)" section
-- Limitations and environment variables (`AGT_GIX_PATH`, `AGT_WORKTREE_PATH`)
+- Environment variables (`AGT_GIT_PATH`, `AGT_WORKTREE_PATH`)
 
 ## Scenarios
 
-### Scenario 1.0: Verify Vendored gix Passthrough
+### Scenario 1.0: Verify Git Passthrough
 
-Verify that git-mode uses the vendored `gix`, not system Git.
+Verify that git-mode spawns the real git binary.
 
 Steps:
-1. Create symlink: `ln -s /path/to/target/release/agt ./git`
-2. Run `./git --version`
-3. Verify output mentions `gix` (e.g., "gix v0.49.0...")
-4. Verify output does NOT mention "Apple Git" or system git version
+1. Create symlink: `ln -s /path/to/dist/agt ./git`
+2. Set `AGT_GIT_PATH=/usr/bin/git` (or system git location)
+3. Run `./git --version`
+4. Verify output shows the system git version (e.g., "git version 2.x.x")
 
-Success: Passthrough uses vendored gix binary
+Success: Passthrough uses real git binary
 
 ### Scenario 1.1: Repository Discovery + Status
 
 Test that basic repo discovery and status works:
-- Create a repository with `agt init` (or `gix clone`)
+- Create a repository with `agt init` (or `git clone`)
 - Run `git status` (via `./git status`)
 - Verify it runs and exits successfully
 
@@ -61,7 +62,7 @@ Success: Commands run successfully
 ### Scenario 1.3: Clone / Fetch (Local)
 
 - Create a local bare repo as a "remote"
-- Run `git clone` from it (via gix passthrough)
+- Run `git clone` from it (via git passthrough)
 - Run `git fetch` from it
 
 Success: Clone/fetch succeed for local remotes
@@ -76,7 +77,7 @@ formats (`--oneline`, `--pretty`, `--format`) require `--disable-agt`.
 - Run `./git add -A` followed by `./git commit -m "snapshot"`
 - Inspect the commit tree (e.g., `./git ls-tree HEAD`)
 
-Success: `ignore_me.txt` is **absent** while `include_me.txt` and `.gitignore` are present. Failure reproduces ISSUE-005.
+Success: `ignore_me.txt` is **absent** while `include_me.txt` and `.gitignore` are present.
 
 ### Scenario 1.5: `git commit` supports multiple `-m` flags
 
@@ -89,16 +90,16 @@ Success: Commit summary equals `Title` and the body contains `Body paragraph`.
 ## Success Criteria
 
 All scenarios must pass. Failures indicate either:
-- Vendored `gix` passthrough is not wired correctly, or
-- Documentation claims exceed current `gix` capabilities
+- Git passthrough is not wired correctly, or
+- Filtering is interfering with normal git operations
 
 ## Failure Modes
 
 - Command not recognized
-- Output format differs from standard git
+- Output format differs from expected
 - Exit codes don't match git behavior
 - Error messages differ significantly
 
 ## Notes
 
-This suite does NOT test agt-specific commands like `agt autocommit`. It purely validates `gix` passthrough behavior.
+This suite does NOT test agt-specific commands like `agt autocommit`. It purely validates git passthrough behavior.

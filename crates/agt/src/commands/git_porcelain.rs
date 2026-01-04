@@ -174,10 +174,23 @@ fn signature_from_config(repo: &Repository) -> (String, String) {
 }
 
 fn stage_all(index: &mut IndexFile, repo: &Repository, work_dir: &Path) -> Result<()> {
+    // Stage all untracked files (respecting .gitignore)
     for rel_path in walk_worktree(work_dir, repo)? {
         stage_one(index, repo, work_dir, &rel_path)?;
     }
 
+    // Re-stage all tracked files (to pick up modifications)
+    let tracked: Vec<PathBuf> = index
+        .entries()
+        .iter()
+        .map(|entry| from_byte_slice(entry.path(index)).to_path_buf())
+        .collect();
+
+    for rel_path in &tracked {
+        stage_one(index, repo, work_dir, rel_path)?;
+    }
+
+    // Remove entries for deleted files
     let work_dir = work_dir.to_path_buf();
     index.remove_entries(|_idx, path, _entry| {
         let rel = from_byte_slice(path).to_path_buf();

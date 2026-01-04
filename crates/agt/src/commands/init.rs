@@ -32,13 +32,15 @@ pub fn run(remote_url: &str, target_path: Option<&Path>, config: &AgtConfig) -> 
     std::fs::create_dir_all(&work_path)?;
     setup_main_worktree(&bare_path, &work_path, &repo_name)?;
 
-    // 4. Write default config (agt settings only, keep bare=true)
-    write_default_config(&bare_path, config)?;
+    // 4. Create .agt directory in worktree and write config
+    let agt_dir = work_path.join(".agt");
+    std::fs::create_dir_all(&agt_dir)?;
+    write_agt_config(&agt_dir, config)?;
 
-    // 5. Create agt state directory
-    let agt_dir = bare_path.join("agt");
-    std::fs::create_dir_all(agt_dir.join("timestamps"))?;
-    std::fs::create_dir_all(agt_dir.join("sessions"))?;
+    // 5. Create agt state directory (in bare repo for session management)
+    let agt_state_dir = bare_path.join("agt");
+    std::fs::create_dir_all(agt_state_dir.join("timestamps"))?;
+    std::fs::create_dir_all(agt_state_dir.join("sessions"))?;
 
     println!("Initialized agt repository: {repo_name}");
     println!("  Bare repo: {}", bare_path.display());
@@ -120,10 +122,12 @@ fn checkout_to_worktree(
         .context("Failed to build index from tree")?;
     index.set_path(admin_dir.join("index"));
 
-    let mut opts = gix_worktree_state::checkout::Options::default();
-    opts.fs = Capabilities::probe(worktree);
-    opts.destination_is_initially_empty = true;
-    opts.overwrite_existing = true;
+    let opts = gix_worktree_state::checkout::Options {
+        fs: Capabilities::probe(worktree),
+        destination_is_initially_empty: true,
+        overwrite_existing: true,
+        ..Default::default()
+    };
 
     let files = Discard;
     let bytes = Discard;
@@ -142,36 +146,18 @@ fn checkout_to_worktree(
     Ok(())
 }
 
-/// Write default agt configuration to the git config file.
-/// Only writes the [agt] section - does NOT change bare=true.
-fn write_default_config(bare_path: &Path, config: &AgtConfig) -> Result<()> {
-    let config_path = bare_path.join("config");
-    let mut contents = if config_path.exists() {
-        std::fs::read_to_string(&config_path)?
-    } else {
-        String::new()
-    };
+/// Write agt configuration to .agt/config in the worktree.
+fn write_agt_config(agt_dir: &Path, config: &AgtConfig) -> Result<()> {
+    let config_path = agt_dir.join("config");
 
-    if !contents.ends_with('\n') {
-        contents.push('\n');
-    }
-
-    // Ensure bare=true remains explicitly set (linked worktree admin dirs exist under a bare repo).
-    if contents.contains("bare = false") {
-        contents = contents.replace("bare = false", "bare = true");
-    }
-    if !contents.contains("bare = true") {
-        contents.push_str("[core]\n\tbare = true\n\n");
-    }
-
-    // Only write agt section - keep repo bare
+    let mut contents = String::new();
     contents.push_str("[agt]\n");
-    contents.push_str(&format!("\tagentEmail = {}\n", config.agent_email));
-    contents.push_str(&format!("\tbranchPrefix = {}\n", config.branch_prefix));
+    contents.push_str(&format!("    gitPath = {}\n", config.git_path.display()));
+    contents.push_str(&format!("    agentEmail = {}\n", config.agent_email));
+    contents.push_str(&format!("    branchPrefix = {}\n", config.branch_prefix));
     if let Some(user_email) = &config.user_email {
-        contents.push_str(&format!("\tuserEmail = {}\n", user_email));
+        contents.push_str(&format!("    userEmail = {}\n", user_email));
     }
-    contents.push('\n');
 
     std::fs::write(&config_path, contents)?;
 

@@ -8,14 +8,14 @@ SYNOPSIS
        git [--disable-agt] <command> [options]
 
 DESCRIPTION
-       agt is a Git wrapper built on gitoxide that provides dual-mode operation for
-       managing AI agent coding sessions with immutable filesystem snapshots and
-       time-travel capabilities.
+       agt is a Git wrapper that provides dual-mode operation for managing AI
+       agent coding sessions with immutable filesystem snapshots and time-travel
+       capabilities.
 
-       When invoked as 'git', agt behaves like standard Git but filters out agent
-       branches, tags, and commits based on configuration. When invoked as 'agt',
-       all branches and commits are visible, and additional agent management
-       commands are available.
+       When invoked as 'git', agt spawns the real git binary and filters its
+       stdout to hide agent branches, tags, and commits based on configuration.
+       When invoked as 'agt', all branches and commits are visible, and additional
+       agent management commands are available.
 
        The tool enables parallel agent workflows where multiple AI agents can work
        concurrently in isolated worktrees while maintaining a complete, immutable
@@ -25,22 +25,33 @@ DESCRIPTION
 DUAL-MODE OPERATION
        git mode (filtered)
               When the binary is invoked as 'git' (via symlink or rename), it
-              operates as a Git-like wrapper (powered by the vendored `gix` CLI)
-              with the following filtering:
+              spawns the real git binary (configured via agt.gitPath) and filters
+              the output:
 
               • Branches matching the configured prefix are hidden from output
               • Tags matching the configured prefix are hidden from output
               • Commits authored by the agent email are hidden from logs
-              • Commands supported by `gix` work with filtered output (not all
-                `git(1)` subcommands are available yet)
+              • All git commands are supported (full git compatibility)
 
        agt mode (unfiltered)
               When invoked as 'agt', no filtering is applied and additional
               commands are available for agent session management.
 
 CONFIGURATION
-       agt uses Git configuration files (global ~/.gitconfig or local .git/config)
-       with the following settings:
+       agt uses its own configuration files, separate from git's:
+
+       ~/.agtconfig
+              Global agt configuration file (equivalent to ~/.gitconfig).
+
+       .agt/config
+              Local repository agt configuration (stored in .agt/ not .git/).
+
+       Configuration settings:
+
+       agt.gitPath
+              Path to the real git binary. Required when agt is invoked as 'git'.
+              The real git should NOT be on PATH to prevent users accidentally
+              using it directly. Example: /opt/git/bin/git
 
        agt.agentEmail
               Email address used for auto-commit operations. Commits by this
@@ -48,14 +59,15 @@ CONFIGURATION
 
        agt.branchPrefix
               Prefix for agent session branches. Branches and tags matching this
-              prefix are filtered in git mode. Example: agtsessions/
+              prefix are filtered in git mode. Default: agtsessions/
 
        agt.userEmail
               The user's normal email for reference. Currently informational and
               reserved for future filtering/attribution features.
 
-       Example configuration:
+       Example configuration (~/.agtconfig):
               [agt]
+                  gitPath = /opt/git/bin/git
                   agentEmail = agt.opencode@local
                   branchPrefix = agtsessions/
                   userEmail = simon@example.com
@@ -69,7 +81,7 @@ COMMANDS
               1. Clones <remote-url> as a bare repository (<name>.git)
               2. Creates an adjacent main checkout directory (<name>)
               3. Configures the worktree to use the bare repo
-              4. Sets up default agt configuration
+              4. Sets up default agt configuration in .agt/config
               5. Creates the agt state directory (<common-git-dir>/agt/)
 
               Options:
@@ -136,20 +148,17 @@ COMMANDS
               • Pending autocommits
               • Configuration summary
 
-  GIT COMMANDS (both modes)
+   GIT COMMANDS (both modes)
 
-       Git-like passthrough is provided by the vendored `gix` CLI. In git mode,
-       output is filtered according to agt configuration. Not all `git(1)`
-       subcommands are implemented by `gix` yet; unsupported commands will fail.
-       agt uses the `agt-worktree` helper for linked worktree add/remove; system
-       Git is not used. Override with AGT_GIX_PATH or AGT_WORKTREE_PATH.
+       When invoked as 'git', agt spawns the real git binary (from agt.gitPath)
+       and filters its stdout. All git commands are fully supported.
 
-       Limitations (git mode, filtering enabled):
-              • `git worktree` is disabled in git mode
-              • `git log` filtering only works with the default log format; custom
-                `--oneline`/`--pretty`/`--format` requires `--disable-agt`
-              • `git commit` supports `-m/--message` only (no editor integration)
-              • `git add` supports explicit paths plus `-A/--all` and `-u/--update`
+       In git mode, output is filtered according to agt configuration:
+              • Branch listings hide branches matching agt.branchPrefix
+              • Tag listings hide tags matching agt.branchPrefix
+              • Log output hides commits by agt.agentEmail
+
+       The filtering is line-based on stdout. Stderr is passed through unmodified.
 
        Examples:
 
@@ -181,11 +190,12 @@ OPTIONS
               Print help for the command.
 
 FILES
-       ~/.gitconfig
-              Global Git configuration. Can contain [agt] section.
+       ~/.agtconfig
+              Global agt configuration. Contains [agt] section with gitPath,
+              agentEmail, branchPrefix, etc.
 
-       .git/config
-              Local repository configuration. Can override global [agt] settings.
+       .agt/config
+              Local repository agt configuration. Overrides global settings.
 
        <common-git-dir>/agt/
               AGT state directory stored in the repository's common git directory
@@ -209,14 +219,19 @@ ENVIRONMENT
        AGT_DEBUG
               If set to "1", enables debug output showing filtering decisions.
 
+       AGT_GIT_PATH
+              Override agt.gitPath configuration. Path to the real git binary.
+
 EXAMPLES
        Initialize a new agt-managed repository:
               $ agt init https://github.com/user/project.git
               $ cd project
 
-       Configure agt settings:
-              $ git config agt.agentEmail "agt.opencode@local"
-              $ git config agt.branchPrefix "agtsessions/"
+       Configure agt settings (in ~/.agtconfig):
+              [agt]
+                  gitPath = /opt/git/bin/git
+                  agentEmail = agt.opencode@local
+                  branchPrefix = agtsessions/
 
        Start a new agent session:
               $ agt fork --session-id agent-001
@@ -271,6 +286,8 @@ ARCHITECTURE
               project.git/           # Bare repository (object store)
               project/               # Main user worktree
               ├── .git               # File pointing to ../project.git
+              ├── .agt/              # Local agt configuration
+              │   └── config
               └── sessions/          # Agent worktrees
                   ├── agent-001/
                   │   └── .git       # File pointing to ../../project.git
@@ -299,7 +316,7 @@ EXIT STATUS
        128    Git operation failed
 
 SEE ALSO
-       git(1), git-worktree(1), gitoxide documentation
+       git(1), git-worktree(1)
 
 BUGS
        Report bugs at: https://github.com/user/agt/issues

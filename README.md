@@ -8,7 +8,7 @@ This repository contains tools for managing AI agent coding sessions with immuta
 
 - **Parallel agent workflows** - Multiple AI agents work concurrently in isolated worktrees
 - **Immutable history** - Every file modification is captured in the Git object store
-- **Sandboxing** - Designed to be compatible with sandboxing tools (e.g.  `bubblewrap` (bwrap) to jail agent processes)
+- **Sandboxing** - Designed to be compatible with sandboxing tools (e.g. `bubblewrap` (bwrap) to jail agent processes)
 - **Time travel** - Roll back to any point in agent history, fork from any state
 - **Transparent user experience** - When invoked as `git`, agent branches are hidden
 
@@ -22,9 +22,10 @@ agt/
 ├── docs/
 │   └── agt.1.txt       # Man page for agt tool
 ├── crates/
-│   └── agt/            # Rust implementation of agt
-│       ├── Cargo.toml
-│       └── src/
+│   ├── agt/            # Rust implementation of agt
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   └── agt-worktree/   # Worktree helper binary
 └── CODING_PROMPT.md    # Implementation prompt for AI agents
 ```
 
@@ -32,9 +33,9 @@ agt/
 
 ### agt - Agent Git Tool
 
-A dual-mode Git wrapper built on [gitoxide](https://github.com/Byron/gitoxide):
+A dual-mode Git wrapper that spawns the real git binary and filters its output:
 
-- **As `git`**: Git-like passthrough with filtered output (hides agent branches/commits); backed by the vendored `gix` CLI
+- **As `git`**: Spawns real git, filters stdout to hide agent branches/commits
 - **As `agt`**: Full visibility plus agent session management commands
 
 Key commands:
@@ -43,7 +44,26 @@ Key commands:
 - `agt autocommit -C <path> --session-id <id>` - Snapshot all modified files
 
 See [docs/agt.1.txt](docs/agt.1.txt) for the complete man page.
-This repo vendors gitoxide and uses its `gix` CLI for git passthrough. Worktree add/remove is handled by the `agt-worktree` helper; system Git is not used.
+
+## Configuration
+
+AGT uses its own configuration files, separate from git's:
+
+- `~/.agtconfig` - Global configuration
+- `.agt/config` - Local repository configuration
+
+Example `~/.agtconfig`:
+```ini
+[agt]
+    gitPath = /opt/git/bin/git
+    agentEmail = agt.opencode@local
+    branchPrefix = agtsessions/
+```
+
+**Required settings:**
+- `agt.gitPath` - Path to the real git binary (should NOT be on PATH)
+- `agt.agentEmail` - Email for agent commits (filtered in git mode)
+- `agt.branchPrefix` - Prefix for agent branches (default: `agtsessions/`)
 
 ## Quick Start
 
@@ -56,17 +76,20 @@ git clone <this-repo>
 cd agt
 mise install
 
-# Build agt
-cd crates/agt
-cargo build --release
+# Build
+make build
+
+# Configure agt (in ~/.agtconfig)
+cat >> ~/.agtconfig << 'EOF'
+[agt]
+    gitPath = /usr/bin/git
+    agentEmail = agt.opencode@local
+    branchPrefix = agtsessions/
+EOF
 
 # Initialize a project with agt
-agt init https://github.com/user/project.git
+dist/agt init https://github.com/user/project.git
 cd project
-
-# Configure
-git config agt.agentEmail "agt.opencode@local"
-git config agt.branchPrefix "agtsessions/"
 
 # Create an agent session
 agt fork --session-id agent-001
@@ -79,7 +102,7 @@ agt autocommit -C sessions/agent-001 --session-id agent-001
 
 This is a polyglot monorepo managed with mise. Currently includes:
 
-- **Rust** - Core `agt` tool (crates/agt)
+- **Rust** - Core `agt` tool (crates/agt) and worktree helper (crates/agt-worktree)
 
 ### Prerequisites
 
@@ -93,10 +116,9 @@ mise install          # Install all tools
 make build            # Build all binaries to dist/
 ```
 
-After building, all binaries are in `dist/`:
+After building, binaries are in `dist/`:
 - `dist/agt` - Main AGT tool
 - `dist/agt-worktree` - Worktree helper
-- `dist/gix` - Vendored gitoxide CLI
 
 Run AGT from the `dist/` folder or add it to your PATH:
 
@@ -104,7 +126,7 @@ Run AGT from the `dist/` folder or add it to your PATH:
 export PATH="/path/to/agt/dist:$PATH"
 ```
 
-The binaries must stay together in the same folder - AGT locates `gix` and `agt-worktree` relative to itself.
+The `agt` and `agt-worktree` binaries should be in the same folder.
 
 ## Design Philosophy
 
@@ -113,18 +135,34 @@ The binaries must stay together in the same folder - AGT locates `gix` and `agt-
 3. **Dual-parent commits** - Agent commits link to both agent history and user branch
 4. **Local-only agent branches** - Never pushed to remotes, only user branches sync
 5. **Timestamp-based scanning** - Fast file discovery without index manipulation
+6. **Real git passthrough** - Full git compatibility via spawning real git binary
+
+## How It Works
+
+When invoked as `git` (via symlink or rename):
+1. AGT reads `agt.gitPath` from `~/.agtconfig` or `.agt/config`
+2. Spawns the real git binary with all arguments
+3. Filters stdout line-by-line to hide agent branches/commits
+4. Passes stderr through unmodified
+
+This gives full git compatibility while hiding agent implementation details from the user.
 
 ## Corner Cases
 
 - Detached HEAD in agent worktrees is unsupported; autocommit expects a branch checkout.
 - Symlink cycles are ignored during filesystem scans; symlinks are not followed.
 - Symlinks are stored as symlinks; targets are captured as-is (external symlinks may be broken when checked out elsewhere).
-- In `git` mode, `git log` filtering only works with the default log format; custom pretty/oneline formats require `--disable-agt`.
 
 ## Known Limitations
 
 - **Merging agent branches back** - Not yet implemented. Use manual `git merge` to integrate agent work into user branches.
-- **Binary discovery** - All binaries (`agt`, `gix`, `agt-worktree`) must be in the same folder. If running from a non-standard location, set `AGT_GIX_PATH` and `AGT_WORKTREE_PATH` environment variables.
+
+## Environment Variables
+
+- `AGT_GIT_PATH` - Override `agt.gitPath` configuration
+- `AGT_WORKTREE_PATH` - Override location of `agt-worktree` binary
+- `AGT_DISABLE_FILTER` - Set to "1" to disable filtering in git mode
+- `AGT_DEBUG` - Set to "1" for debug output
 
 ## License
 

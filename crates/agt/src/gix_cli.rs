@@ -1,8 +1,41 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-pub fn find_gix_binary(base: &Path) -> Result<PathBuf> {
-    find_named_binary("gix", "AGT_GIX_PATH", base)
+pub fn find_git_binary() -> Result<PathBuf> {
+    // 1. Check AGT_GIT_PATH env var first
+    if let Ok(path) = std::env::var("AGT_GIT_PATH") {
+        let candidate = PathBuf::from(&path);
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    // 2. Search PATH using `which git`
+    if let Ok(output) = Command::new("which").arg("git").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Ok(PathBuf::from(path));
+            }
+        }
+    }
+
+    // 3. Fallback to common locations
+    let fallbacks = [
+        "/usr/bin/git",
+        "/usr/local/bin/git",
+        "/opt/homebrew/bin/git",
+    ];
+
+    for path in fallbacks {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return Ok(p);
+        }
+    }
+
+    anyhow::bail!("git binary not found; set AGT_GIT_PATH or ensure git is in PATH")
 }
 
 pub fn find_worktree_binary(base: &Path) -> Result<PathBuf> {
@@ -29,8 +62,7 @@ fn find_named_binary(name: &str, env_var: &str, base: &Path) -> Result<PathBuf> 
     let candidates = [
         base.join("target/release").join(&bin_name),
         base.join("target/debug").join(&bin_name),
-        base.join("vendor/gitoxide/target/release").join(&bin_name),
-        base.join("vendor/gitoxide/target/debug").join(&bin_name),
+        base.join("dist").join(&bin_name),
     ];
 
     for candidate in candidates {
@@ -39,7 +71,7 @@ fn find_named_binary(name: &str, env_var: &str, base: &Path) -> Result<PathBuf> 
         }
     }
 
-    anyhow::bail!("{name} binary not found; set {env_var} or build it in target/ or vendor/")
+    anyhow::bail!("{name} binary not found; set {env_var} or build it")
 }
 
 pub fn repo_base_path(repo: &gix::Repository) -> PathBuf {

@@ -33,11 +33,14 @@ These test suites are designed to be executed by AI coding agents. Each suite ru
 
 ## Architecture Note
 
-The `agt` tool uses a **vendored `gix` CLI** (from gitoxide) for all git passthrough operations.
-This ensures consistent behavior across environments and avoids dependency on system Git.
-When invoked as `git` (via symlink), agt delegates to the vendored gix, not system Git.
+When invoked as `git` (via symlink), agt spawns the real git binary and filters its stdout
+to hide agent branches, tags, and commits. This provides full git compatibility while keeping
+agent implementation details hidden from users.
 
-Build both binaries with: `make build`
+The path to the real git binary is configured via `agt.gitPath` in `~/.agtconfig` or can be
+overridden with the `AGT_GIT_PATH` environment variable.
+
+Build binaries with: `make build`
 
 ## Running a Suite
 

@@ -12,7 +12,7 @@ The MVP scenario: "Fork three agents, delete two, merge one"
 
 ## Setup
 
-1. Build all binaries: `make build` (builds both `agt` and vendored `gix`)
+1. Build all binaries: `make build`
 2. Create directory: `mkdir -p .tmp/suite3 && cd .tmp/suite3`
 3. Initialize an agt-managed repo with some starting content
 

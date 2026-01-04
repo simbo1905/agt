@@ -16,7 +16,7 @@ Verify the complete lifecycle of a single agent session:
 
 ## Setup
 
-1. Build all binaries: `make build` (builds both `agt` and vendored `gix`)
+1. Build all binaries: `make build`
 2. Create directory: `mkdir -p .tmp/suite2 && cd .tmp/suite2`
 3. The `agt` binary should be accessible (add to PATH or use full path)
 

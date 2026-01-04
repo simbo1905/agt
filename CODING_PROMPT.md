@@ -2,7 +2,7 @@
 
 ## Objective
 
-Create a Rust binary called `agt` that wraps gitoxide to provide dual-mode Git operation for AI agent session management with immutable filesystem snapshots.
+Create a Rust binary called `agt` that wraps the real git binary to provide dual-mode Git operation for AI agent session management with immutable filesystem snapshots.
 
 ## Documentation as Target State
 
@@ -19,7 +19,7 @@ crates/agt/
 └── src/
     ├── main.rs
     ├── cli.rs
-    ├── config.rs
+    ├── config.rs      # Reads ~/.agtconfig and .agt/config
     ├── filter.rs
     ├── scanner.rs
     └── commands/
@@ -61,7 +61,7 @@ predicates = "3"
 ### 1. Dual-Mode Detection (main.rs)
 
 Check `std::env::args().next()` (argv[0]) to determine invocation name:
-- Contains "git" → git mode (filtered)
+- Contains "git" → git mode (spawn real git, filter output)
 - Contains "agt" → agt mode (full + extra commands)
 
 ```rust
@@ -74,29 +74,40 @@ fn main() -> anyhow::Result<()> {
 
 ### 2. Configuration (config.rs)
 
-Read from git config files using gitoxide:
+AGT uses its own config files, separate from git's:
+
+- `~/.agtconfig` - Global configuration
+- `.agt/config` - Local repository configuration
 
 ```rust
 pub struct AgtConfig {
-    pub agent_email: String,      // agt.agentEmail
-    pub branch_prefix: String,    // agt.branchPrefix  
+    pub git_path: PathBuf,         // agt.gitPath - path to real git binary
+    pub agent_email: String,       // agt.agentEmail
+    pub branch_prefix: String,     // agt.branchPrefix  
     pub user_email: Option<String>, // agt.userEmail
 }
 
 impl AgtConfig {
-    pub fn load(repo: &gix::Repository) -> anyhow::Result<Self> {
-        let config = repo.config_snapshot();
-        Ok(Self {
-            agent_email: config
-                .string("agt.agentEmail")
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "agt@local".to_string()),
-            branch_prefix: config
-                .string("agt.branchPrefix")
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "agtsessions/".to_string()),
-            user_email: config.string("agt.userEmail").map(|s| s.to_string()),
-        })
+    pub fn load() -> anyhow::Result<Self> {
+        // Read ~/.agtconfig first
+        let global_config = dirs::home_dir()
+            .map(|h| h.join(".agtconfig"))
+            .filter(|p| p.exists());
+        
+        // Then read .agt/config if in a repo
+        let local_config = find_repo_root()
+            .map(|r| r.join(".agt/config"))
+            .filter(|p| p.exists());
+        
+        // Parse ini-style config, local overrides global
+        // ...
+        
+        // Check AGT_GIT_PATH env var override
+        if let Ok(path) = std::env::var("AGT_GIT_PATH") {
+            config.git_path = PathBuf::from(path);
+        }
+        
+        Ok(config)
     }
 }
 ```
@@ -159,41 +170,33 @@ pub enum Commands {
 
 ### 4. Filtering Logic (filter.rs)
 
-Filter branches and commits in git mode:
+Filter git stdout in git mode:
 
 ```rust
 pub fn should_hide_ref(ref_name: &str, config: &AgtConfig) -> bool {
     ref_name.contains(&config.branch_prefix)
 }
 
-pub fn should_hide_commit(commit: &gix::Commit, config: &AgtConfig) -> bool {
-    commit.author()
-        .map(|a| a.email.to_string() == config.agent_email)
-        .unwrap_or(false)
+pub fn should_hide_commit_line(line: &str, config: &AgtConfig) -> bool {
+    // Check if line contains author email
+    line.contains(&config.agent_email)
 }
 ```
-
-For git passthrough commands that list branches/tags/logs, intercept output and filter.
 
 ### 5. Init Command (commands/init.rs)
 
 ```rust
-pub fn run(remote_url: &str, target_path: Option<&Path>) -> anyhow::Result<()> {
+pub fn run(remote_url: &str, target_path: Option<&Path>, config: &AgtConfig) -> anyhow::Result<()> {
     // 1. Determine paths
     let repo_name = extract_repo_name(remote_url)?;
     let base = target_path.unwrap_or(Path::new("."));
     let bare_path = base.join(format!("{}.git", repo_name));
     let work_path = base.join(&repo_name);
 
-    // 2. Clone as bare
-    gix::clone::PrepareFetch::new(
-        remote_url,
-        &bare_path,
-        gix::create::Kind::Bare,
-        gix::create::Options::default(),
-        gix::open::Options::isolated(),
-    )?
-    .fetch_then_checkout(gix::progress::Discard, &std::sync::atomic::AtomicBool::new(false))?;
+    // 2. Clone as bare using real git
+    std::process::Command::new(&config.git_path)
+        .args(["clone", "--bare", remote_url, bare_path.to_str().unwrap()])
+        .status()?;
 
     // 3. Create worktree directory
     std::fs::create_dir_all(&work_path)?;
@@ -202,13 +205,21 @@ pub fn run(remote_url: &str, target_path: Option<&Path>) -> anyhow::Result<()> {
     let git_file = work_path.join(".git");
     std::fs::write(&git_file, format!("gitdir: ../{}.git", repo_name))?;
 
-    // 5. Checkout HEAD
-    // Use gix to checkout files to work_path
+    // 5. Create .agt/config with default settings
+    let agt_dir = work_path.join(".agt");
+    std::fs::create_dir_all(&agt_dir)?;
+    std::fs::write(agt_dir.join("config"), "[agt]\n    branchPrefix = agtsessions/\n")?;
 
-    // 6. Create agt state directory
-    let agt_dir = bare_path.join("agt");
-    std::fs::create_dir_all(agt_dir.join("timestamps"))?;
-    std::fs::create_dir_all(agt_dir.join("sessions"))?;
+    // 6. Checkout HEAD using real git
+    std::process::Command::new(&config.git_path)
+        .args(["checkout", "HEAD"])
+        .current_dir(&work_path)
+        .status()?;
+
+    // 7. Create agt state directory
+    let agt_state_dir = bare_path.join("agt");
+    std::fs::create_dir_all(agt_state_dir.join("timestamps"))?;
+    std::fs::create_dir_all(agt_state_dir.join("sessions"))?;
 
     Ok(())
 }
@@ -239,15 +250,15 @@ pub fn run(
         format!("agt fork: create session {}", session_id),
     )?;
 
-    // 3. Create worktree
+    // 3. Create worktree using agt-worktree helper
     let worktree_path = repo.work_dir()
         .ok_or_else(|| anyhow::anyhow!("No work dir"))?
         .join("sessions")
         .join(session_id);
     
-    // Use git worktree add equivalent
-    std::process::Command::new("git")
-        .args(["worktree", "add", worktree_path.to_str().unwrap(), &branch_name])
+    let worktree_bin = find_worktree_binary()?;
+    std::process::Command::new(worktree_bin)
+        .args(["add", worktree_path.to_str().unwrap(), &branch_name])
         .current_dir(repo.work_dir().unwrap())
         .status()?;
 
@@ -371,7 +382,7 @@ fn build_tree_from_files(
 
 ### 8. Git Passthrough (commands/passthrough.rs)
 
-For unrecognized commands, pass through to git but filter output in git mode:
+Spawn real git and filter stdout:
 
 ```rust
 pub fn run(
@@ -380,41 +391,47 @@ pub fn run(
     disable_filter: bool,
     config: &AgtConfig,
 ) -> anyhow::Result<()> {
-    let output = std::process::Command::new("git")
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new(&config.git_path)
         .args(args)
-        .output()?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())  // Pass stderr through unmodified
+        .spawn()?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = child.stdout.take().unwrap();
+    let reader = BufReader::new(stdout);
     
-    if is_git_mode && !disable_filter {
-        // Filter output based on command
-        let filtered = filter_output(&stdout, args, config);
-        print!("{}", filtered);
-    } else {
-        print!("{}", stdout);
-    }
-
-    std::io::stderr().write_all(&output.stderr)?;
-    std::process::exit(output.status.code().unwrap_or(1));
-}
-
-fn filter_output(output: &str, args: &[String], config: &AgtConfig) -> String {
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("");
     
-    match cmd {
-        "branch" => filter_branch_output(output, config),
-        "tag" => filter_tag_output(output, config),
-        "log" => filter_log_output(output, config),
-        _ => output.to_string(),
+    for line in reader.lines() {
+        let line = line?;
+        
+        if is_git_mode && !disable_filter {
+            if should_filter_line(&line, cmd, config) {
+                continue;  // Skip this line
+            }
+        }
+        
+        println!("{}", line);
     }
+
+    let status = child.wait()?;
+    std::process::exit(status.code().unwrap_or(1));
 }
 
-fn filter_branch_output(output: &str, config: &AgtConfig) -> String {
-    output
-        .lines()
-        .filter(|line| !line.contains(&config.branch_prefix))
-        .collect::<Vec<_>>()
-        .join("\n")
+fn should_filter_line(line: &str, cmd: &str, config: &AgtConfig) -> bool {
+    match cmd {
+        "branch" => line.contains(&config.branch_prefix),
+        "tag" => line.contains(&config.branch_prefix),
+        "log" => {
+            // Filter commits by agent email
+            // This is approximate - works for default log format
+            line.contains(&config.agent_email)
+        },
+        _ => false,
+    }
 }
 ```
 
@@ -504,8 +521,8 @@ fn test_fork_creates_branch_and_worktree() {
 
 1. Working `agt` binary with all commands
 2. Dual-mode operation (git vs agt invocation)
-3. Configuration reading from git config
-4. Branch/tag/commit filtering in git mode
+3. Configuration reading from `~/.agtconfig` and `.agt/config`
+4. Branch/tag/commit filtering in git mode (via stdout filtering)
 5. `--disable-agt` flag to bypass filtering
 6. `agt init` command creating bare repo layout
 7. `agt fork` command creating sessions
@@ -516,9 +533,9 @@ fn test_fork_creates_branch_and_worktree() {
 ## Build Verification
 
 ```bash
-cargo build --release
+make build
 cargo test
-./target/release/agt --help
-ln -s ./target/release/agt ./target/release/git
-./target/release/git --help  # Should work as filtered git
+./dist/agt --help
+ln -s ./dist/agt ./dist/git
+./dist/git --help  # Should work as filtered git
 ```

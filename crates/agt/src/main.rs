@@ -30,17 +30,19 @@ fn main() -> Result<()> {
 
     // Handle init command before discovering repo (init doesn't need existing repo)
     if let Some(Commands::Init { remote_url, path }) = cli.command {
-        let config = config::AgtConfig::default();
+        let config = config::AgtConfig::load_for_init();
         return commands::init::run(&remote_url, path.as_deref(), &config);
     }
 
     // Determine if filtering should be disabled
     let disable_filter = cli.disable_agt || std::env::var("AGT_DISABLE_FILTER").is_ok();
 
-    // Load configuration
-    let repo = gix::discover(".").with_context(|| "Failed to discover Git repository")?;
+    // Load configuration (from ~/.agtconfig and .agt/config)
     let config =
-        config::AgtConfig::load(&repo).with_context(|| "Failed to load AGT configuration")?;
+        config::AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
+
+    // Discover repo
+    let repo = gix::discover(".").with_context(|| "Failed to discover Git repository")?;
 
     // Route to appropriate command handler
     match cli.command {
@@ -107,9 +109,11 @@ fn run_git_mode() -> Result<()> {
             .with_context(|| format!("Failed to change to directory: {}", dir.display()))?;
     }
 
-    let repo = gix::discover(".").with_context(|| "Failed to discover Git repository")?;
+    // Load configuration (from ~/.agtconfig and .agt/config)
     let config =
-        config::AgtConfig::load(&repo).with_context(|| "Failed to load AGT configuration")?;
+        config::AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
+
+    let repo = gix::discover(".").with_context(|| "Failed to discover Git repository")?;
 
     commands::passthrough::run(&args, true, disable_filter, &config, &repo)
 }

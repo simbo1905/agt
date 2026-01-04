@@ -14,7 +14,7 @@ Verify the ability to:
 
 ## Setup
 
-1. Build all binaries: `make build` (builds both `agt` and vendored `gix`)
+1. Build all binaries: `make build`
 2. Create directory: `mkdir -p .tmp/suite4 && cd .tmp/suite4`
 3. Initialize an agt-managed repo with content
 
