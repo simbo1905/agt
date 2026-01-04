@@ -252,6 +252,41 @@ fn test_git_add_all_respects_gitignore() -> Result<(), Box<dyn std::error::Error
 }
 
 #[test]
+fn test_git_add_all_stages_tracked_modifications() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_basic_repo()?;
+    let worktree = repo.worktree();
+
+    let readme_path = worktree.join("README.md");
+    fs::write(&readme_path, "updated contents")?;
+
+    git_mode_cmd(repo.tmp())?
+        .args(["add", "-A"])
+        .env("AGT_GIX_PATH", ensure_gix()?)
+        .current_dir(worktree)
+        .assert()
+        .success();
+
+    git_mode_cmd(repo.tmp())?
+        .args(["commit", "-m", "update tracked file"])
+        .env("AGT_GIX_PATH", ensure_gix()?)
+        .current_dir(worktree)
+        .assert()
+        .success();
+
+    let repo_gix = gix::open(worktree)?;
+    let head = repo_gix.head()?.peel_to_commit_in_place()?.id;
+    let commit = repo_gix.find_object(head)?.into_commit();
+    let tree = commit.tree()?;
+    let entry = tree
+        .lookup_entry_by_path(Path::new("README.md"))?
+        .expect("expected README in commit");
+    let blob = entry.object()?.into_blob();
+    assert_eq!(blob.data.as_slice(), b"updated contents");
+
+    Ok(())
+}
+
+#[test]
 fn test_git_commit_multiple_messages() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_basic_repo()?;
     let worktree = repo.worktree();

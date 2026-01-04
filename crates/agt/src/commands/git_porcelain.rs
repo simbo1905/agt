@@ -217,14 +217,9 @@ fn stage_paths(
         } else {
             cwd.join(path)
         };
-        
-        // Try to canonicalize to match work_dir, but fallback if file doesn't exist (deletion)
-        let abs_canon = abs.canonicalize().unwrap_or_else(|_| abs.clone());
 
-        let rel = abs_canon
+        let rel = abs
             .strip_prefix(&work_dir_canon)
-            .or_else(|_| abs_canon.strip_prefix(work_dir))
-            .or_else(|_| abs.strip_prefix(&work_dir_canon))
             .or_else(|_| abs.strip_prefix(work_dir))
             .with_context(|| format!("Path is outside repository: {}", abs.display()))?
             .to_path_buf();

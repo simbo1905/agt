@@ -69,6 +69,23 @@ Success: Clone/fetch succeed for local remotes
 Note: `git log` filtering in git mode only supports the default format. Custom
 formats (`--oneline`, `--pretty`, `--format`) require `--disable-agt`.
 
+### Scenario 1.4: `git add -A` respects `.gitignore`
+
+- Create a repo with a `.gitignore` that excludes `ignore_me.txt`
+- Create both `ignore_me.txt` and `include_me.txt`
+- Run `./git add -A` followed by `./git commit -m "snapshot"`
+- Inspect the commit tree (e.g., `./git ls-tree HEAD`)
+
+Success: `ignore_me.txt` is **absent** while `include_me.txt` and `.gitignore` are present. Failure reproduces ISSUE-005.
+
+### Scenario 1.5: `git commit` supports multiple `-m` flags
+
+- Stage a file (`./git add file.txt`)
+- Run `./git commit -m "Title" -m "Body paragraph"`
+- Inspect the commit message (`./git log -1`)
+
+Success: Commit summary equals `Title` and the body contains `Body paragraph`.
+
 ## Success Criteria
 
 All scenarios must pass. Failures indicate either:

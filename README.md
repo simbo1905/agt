@@ -90,11 +90,21 @@ This is a polyglot monorepo managed with mise. Currently includes:
 
 ```bash
 mise install          # Install all tools
-make build-gix        # Build vendored gix CLI
-make build-worktree   # Build agt-worktree helper
-cargo build           # Build all Rust crates
-cargo test            # Run tests
+make build            # Build all binaries to dist/
 ```
+
+After building, all binaries are in `dist/`:
+- `dist/agt` - Main AGT tool
+- `dist/agt-worktree` - Worktree helper
+- `dist/gix` - Vendored gitoxide CLI
+
+Run AGT from the `dist/` folder or add it to your PATH:
+
+```bash
+export PATH="/path/to/agt/dist:$PATH"
+```
+
+The binaries must stay together in the same folder - AGT locates `gix` and `agt-worktree` relative to itself.
 
 ## Design Philosophy
 
@@ -110,6 +120,11 @@ cargo test            # Run tests
 - Symlink cycles are ignored during filesystem scans; symlinks are not followed.
 - Symlinks are stored as symlinks; targets are captured as-is (external symlinks may be broken when checked out elsewhere).
 - In `git` mode, `git log` filtering only works with the default log format; custom pretty/oneline formats require `--disable-agt`.
+
+## Known Limitations
+
+- **Merging agent branches back** - Not yet implemented. Use manual `git merge` to integrate agent work into user branches.
+- **Binary discovery** - All binaries (`agt`, `gix`, `agt-worktree`) must be in the same folder. If running from a non-standard location, set `AGT_GIX_PATH` and `AGT_WORKTREE_PATH` environment variables.
 
 ## License
 
