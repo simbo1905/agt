@@ -27,7 +27,7 @@ Before assigning agents:
    ```bash
    make build
    ```
-   This builds `agt` and `agt-worktree` to `dist/`.
+   This builds `agt` (host CLI) and `agt-worktree` (sandbox helper) to `dist/`.
 
 2. **Create working directories**:
    ```bash

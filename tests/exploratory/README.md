@@ -24,7 +24,7 @@ These test suites are designed to be executed by AI coding agents. Each suite ru
 | 7 | `.tmp/suite7` | Stress Test - many files, deep trees |
 | 8 | `.tmp/suite8` | Failure Recovery - interrupted operations |
 | 9 | `.tmp/suite9` | Documentation Audit - verify docs match behavior |
-| 10 | `.tmp/suite10` | Worktree Tool - agt-worktree add/remove |
+| 10 | `.tmp/suite10` | Sandbox Helper - agt-worktree add/remove |
 
 ## Additional Documentation
 

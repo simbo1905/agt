@@ -38,7 +38,7 @@ agt/
 │   ├── agt/            # Rust implementation of agt
 │   │   ├── Cargo.toml
 │   │   └── src/
-│   └── agt-worktree/   # Worktree helper binary
+│   └── agt-worktree/   # Sandbox helper binary
 └── CODING_PROMPT.md    # Implementation prompt for AI agents
 ```
 
@@ -46,9 +46,9 @@ agt/
 
 ### agt - Agent Git Tool
 
-A dual-mode Git wrapper that spawns the real git binary and filters its output:
+A dual-mode Git wrapper that spawns the host git binary and filters its output:
 
-- **As `git`**: Spawns real git, filters stdout to hide shadow branches/commits
+- **As `git`**: Spawns the host git, filters stdout to hide shadow branches/commits
 - **As `agt`**: Full visibility plus session management commands
 
 Key commands:
@@ -76,7 +76,7 @@ Example `~/.agtconfig`:
 ```
 
 **Required settings:**
-- `agt.gitPath` - Path to the real git binary (should NOT be on PATH)
+- `agt.gitPath` - Path to the host git binary (should NOT be on PATH)
 - `agt.agentEmail` - Email for agent commits (filtered in git mode)
 - `agt.branchPrefix` - Prefix for agent branches (default: `agtsessions/`)
 
@@ -120,7 +120,7 @@ agt session export --session-id agent-001
 
 This is a polyglot monorepo managed with mise. Currently includes:
 
-- **Rust** - Core `agt` tool (crates/agt) and worktree helper (crates/agt-worktree)
+- **Rust** - Core `agt` tool (crates/agt) and sandbox helper (crates/agt-worktree)
 
 ### Prerequisites
 
@@ -135,8 +135,8 @@ make build            # Build all binaries to dist/
 ```
 
 After building, binaries are in `dist/`:
-- `dist/agt` - Main AGT tool
-- `dist/agt-worktree` - Worktree helper
+- `dist/agt` - Host-side AGT CLI
+- `dist/agt-worktree` - Sandbox helper used inside agent sessions
 
 Run AGT from the `dist/` folder or add it to your PATH:
 
@@ -144,7 +144,54 @@ Run AGT from the `dist/` folder or add it to your PATH:
 export PATH="/path/to/agt/dist:$PATH"
 ```
 
-The `agt` and `agt-worktree` binaries should be in the same folder.
+The `agt` and `agt-worktree` binaries should be in the same folder. `agt` runs on the host, while `agt-worktree` is copied into the sandbox and invoked as the in-jail git shim.
+
+## Component Diagram
+
+```mermaid
+flowchart TB
+    subgraph "Host / VM"
+        AGT["agt (Host CLI)"]
+        HostGit["Host Git Binary"]
+        Gix["gix Rust Library"]
+        SandboxBin["agt-sandbox helper (dist/agt-worktree)"]
+    end
+
+    subgraph "Session Folder"
+        Sandbox["agt-sandbox directory (sessions/<id>/sandbox/)"]
+        State["Tool state (xdg/, config/)"]
+    end
+
+    subgraph "Git World"
+        BareRepo["Bare repo (<name>.git)"]
+        ShadowBranch["Shadow branch (agtsessions/<id>)"]
+    end
+
+    subgraph "Isolation"
+        Jail["Chroot jail / VM sandbox"]
+    end
+
+    AGT -- "clone, session, autocommit" --> BareRepo
+    AGT -- "scan + package" --> Sandbox
+    AGT -- "scan + package" --> State
+    Gix -- "build shadow trees" --> ShadowBranch
+    ShadowBranch --> BareRepo
+
+    AGT -- "shells out" --> HostGit
+    Jail -- "contains agent" --> Sandbox
+    Jail -- "bind mounts" --> State
+
+    SandboxBin -- "acts as git inside jail" --> HostGit
+    Jail -- "executes" --> SandboxBin
+```
+
+### Diagram Notes
+
+- `agt (Host CLI)` is the binary you run on the host. It parses commands like `session new` and `autocommit`, drives Git operations via `gix`, and shells out to the **Host Git Binary** when necessary.
+- `agt-sandbox helper (dist/agt-worktree)` is the helper binary provided to the jailed agent. Inside the sandbox it behaves like `git`, delegating to the Host Git Binary for actual Git commands.
+- The **agt-sandbox directory** (`sessions/<id>/sandbox/`) is the workspace presented to the agent. Documentation refers to it as agt-sandbox to avoid conflating it with Git’s general “worktree” terminology.
+- Tool state directories (`xdg/`, `config/`) are bind-mounted into the jail so tools find their expected data/config paths.
+- Shadow branches (`agtsessions/<id>`) live in the bare repo `<name>.git`. Autocommit snapshots the entire session folder, builds a tree via `gix`, and writes two-parent commits onto the shadow branch.
 
 ## Design Philosophy
 
@@ -153,7 +200,7 @@ The `agt` and `agt-worktree` binaries should be in the same folder.
 3. **Dual-parent shadow commits** - Shadow commits link to both shadow branch history and user branch
 4. **Local-only shadow branches** - Never pushed to remotes, only user branches sync
 5. **Timestamp-based scanning** - Fast file discovery without index manipulation
-6. **Real git passthrough** - Full git compatibility via spawning real git binary
+6. **Host git passthrough** - Full git compatibility via spawning the configured host git binary
 7. **Profiles** - Tool-specific folder requirements (opencode, cursor, claude-code, etc.)
 
 ## Terminology
@@ -172,7 +219,7 @@ See `DESIGN_20260104.md` for full architecture details.
 
 When invoked as `git` (via symlink or rename):
 1. AGT reads `agt.gitPath` from `~/.agtconfig` or `.agt/config`
-2. Spawns the real git binary with all arguments
+2. Spawns the host git binary with all arguments
 3. Filters stdout line-by-line to hide agent branches/commits
 4. Passes stderr through unmodified
 

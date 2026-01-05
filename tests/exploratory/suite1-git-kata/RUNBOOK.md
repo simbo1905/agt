@@ -87,6 +87,38 @@ Success: `ignore_me.txt` is **absent** while `include_me.txt` and `.gitignore` a
 
 Success: Commit summary equals `Title` and the body contains `Body paragraph`.
 
+### Scenario 1.6: External helper passthrough (`git-xxx`)
+
+Validate that git mode honours git's external helper mechanism.
+
+Steps:
+1. Ensure Scenario 1.0 setup (`./git` symlink and `AGT_GIT_PATH` pointing to real git) is still active.
+2. Create a helper script:
+   ```bash
+   mkdir -p bin
+   cat > bin/git-xxx <<'EOF'
+   #!/usr/bin/env bash
+   echo "helper: git-xxx invoked"
+   EOF
+   chmod +x bin/git-xxx
+   ```
+3. Prepend the helper directory to PATH:
+   ```bash
+   export PATH="$(pwd)/bin:$PATH"
+   ```
+4. Run the helper via agt-as-git:
+   ```bash
+   ./git xxx
+   ```
+
+Success:
+- Output includes `helper: git-xxx invoked` (the helper ran).
+- Exit status is 0.
+- No "unknown command" error from agt or the underlying git.
+
+This scenario verifies the contract documented in `docs/agt.1.txt` that agt, when
+invoked as `git`, delegates unrecognised subcommands to `git-<name>` helpers on PATH.
+
 ## Success Criteria
 
 All scenarios must pass. Failures indicate either:

@@ -2,7 +2,7 @@
 
 ## Objective
 
-Verify the `agt-worktree` helper can create and remove linked worktrees
+Verify the `agt-worktree` sandbox helper can create and remove linked worktrees
 for a bare repository in the vanilla case.
 
 ## Working Directory

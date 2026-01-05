@@ -6,7 +6,7 @@ This document provides guidance for AI coding agents working on the AGT monorepo
 
 This is a polyglot monorepo containing tools for AI agent session management. Tool versions are managed with [mise](https://mise.jdx.dev/).
 
-**Primary deliverable**: The `agt` binary - a Rust tool that wraps the real git binary.
+**Primary deliverable**: The `agt` binary - a Rust tool that wraps the host git binary.
 
 ## Documentation as Target State
 
@@ -35,7 +35,7 @@ agt/
 │   │       │   ├── autocommit.rs  # agt autocommit
 │   │       │   └── passthrough.rs # git command passthrough
 │   │       └── scanner.rs    # Timestamp-based file scanning
-│   └── agt-worktree/   # Worktree helper binary
+│   └── agt-worktree/   # Sandbox helper binary
 └── docs/
     └── agt.1.txt       # Man page (specification)
 ```
@@ -45,20 +45,20 @@ agt/
 ### Dual-Mode Binary
 
 The binary checks `argv[0]` to determine mode:
-- Invoked as `git` → filter mode (spawn real git, filter stdout)
+- Invoked as `git` → filter mode (spawn host git, filter stdout)
 - Invoked as `agt` → full mode (show everything + extra commands)
 
 This is similar to how busybox works.
 
-### Real Git Passthrough
+### Host Git Passthrough
 
 When invoked as `git`, AGT:
-1. Reads `agt.gitPath` from config to find the real git binary
-2. Spawns the real git with all command-line arguments
+1. Reads `agt.gitPath` from config to find the host git binary
+2. Spawns the host git with all command-line arguments
 3. Filters stdout line-by-line to hide agent branches/commits
 4. Passes stderr through unmodified
 
-This provides **full git compatibility** - every git command works.
+This provides **full git compatibility** - every git command works while AGT filters agent state.
 
 ### Configuration
 
@@ -76,14 +76,14 @@ AGT uses its own configuration files (separate from git's):
 ```
 
 **Required settings:**
-- `agt.gitPath` - Path to the real git binary (should NOT be on PATH)
+- `agt.gitPath` - Path to the host git binary (should NOT be on PATH)
 - `agt.agentEmail` - Email for agent commits (filtered in git mode)
 - `agt.branchPrefix` - Prefix for agent branches (default: `agtsessions/`)
 
 ### Why Separate Config Files?
 
-- Real git is not on PATH to prevent users from accidentally bypassing AGT
-- AGT needs to know where the real git is located
+- Host git is not on PATH to prevent users from accidentally bypassing AGT
+- AGT needs to know where the host git is located
 - Clean separation: git's config is for git, AGT's config is for AGT
 
 ### Terminology
@@ -201,7 +201,7 @@ ls dist/
 2. **Timestamps must be overridable for testing** - use `--timestamp` flag
 3. **Git worktrees share the object store** - this is Git's built-in concurrency handling (implementation detail)
 4. **Shadow branches are local-only** - configure refspecs to prevent pushing
-5. **Real git passthrough** - AGT spawns real git for full compatibility
+5. **Host git passthrough** - AGT spawns the configured host git for full compatibility
 6. **Shadow tree = session folder** - the shadow tree mirrors the session folder structure exactly
 
 ## Reference Documentation

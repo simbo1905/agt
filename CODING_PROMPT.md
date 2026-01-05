@@ -250,7 +250,7 @@ pub fn run(
         format!("agt fork: create session {}", session_id),
     )?;
 
-    // 3. Create worktree using agt-worktree helper
+    // 3. Create sandbox link using agt-worktree helper
     let worktree_path = repo.work_dir()
         .ok_or_else(|| anyhow::anyhow!("No work dir"))?
         .join("sessions")

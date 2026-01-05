@@ -18,7 +18,7 @@ DESCRIPTION
        agent management commands are available.
 
        The tool enables parallel agent workflows where multiple AI agents can work
-       concurrently in isolated worktrees while maintaining a complete, immutable
+       concurrently in isolated agt-sandboxes while maintaining a complete, immutable
        history of all file modifications. Agent branches are kept local and never
        pushed to remotes, while user branches follow standard Git workflows.
 
@@ -105,14 +105,14 @@ COMMANDS
               2. Resolves starting point (HEAD or --from)
               3. Creates shadow branch agtsessions/<id>
               4. Creates session folder at sessions/<id>/
-              5. Creates sandbox (git worktree at sessions/<id>/sandbox/)
+              5. Creates sandbox (agt-sandbox at sessions/<id>/sandbox/)
               6. Creates sibling folders based on profile (xdg/, config/)
               7. Initializes timestamp tracking for autocommits
               8. Records session metadata
 
               Session folder layout:
                   sessions/<id>/
-                  ├── sandbox/        # Agent runs here (git worktree)
+                  ├── sandbox/        # Agent runs here (agt-sandbox workspace)
                   │   └── .git        # Points to ../../../.bare/worktrees/sandbox
                   ├── xdg/            # XDG_DATA_HOME (tool state)
                   ├── config/         # XDG_CONFIG_HOME (tool config)
@@ -144,7 +144,7 @@ COMMANDS
               Remove an agent session and clean up its resources.
 
               1. Removes session folder (sessions/<id>/)
-              2. Removes git worktree
+              2. Removes sandbox worktree
               3. Deletes shadow branch (agtsessions/<id>) if --delete-branch
               4. Cleans up session metadata
 
@@ -233,6 +233,27 @@ COMMANDS
 
        The filtering is line-based on stdout. Stderr is passed through unmodified.
 
+   EXTERNAL HELPER COMMANDS (git-xxx)
+
+       Git supports extensibility by searching the PATH for executables named
+       `git-<subcommand>` when it encounters an unknown subcommand. agt honours
+       this behaviour exactly when invoked in git mode. After spawning the real
+       git binary, if the subcommand is not a built-in, git will execute the first
+       matching helper on PATH (for example, `git rabbit` runs `git-rabbit`). Any
+       stdout emitted by the helper is still subject to agt's standard filtering,
+       but helpers otherwise run unchanged.
+
+       Example:
+
+              $ ln -s /path/to/dist/agt ./git
+              $ export AGT_GIT_PATH=/usr/bin/git
+              $ export PATH="$(pwd)/bin:$PATH"   # bin/git-rabbit is executable
+              $ ./git rabbit
+
+       The helper `bin/git-rabbit` is invoked exactly as with stock git; no
+       additional flags or environment variables are required beyond the usual
+       git mode setup.
+
        Examples:
 
        git branch
@@ -283,7 +304,7 @@ FILES
 
        sessions/<session-id>/
               Session folder containing:
-              - sandbox/ (git worktree where agent runs)
+              - sandbox/ (agt-sandbox workspace where agent runs)
               - xdg/ (tool state, XDG_DATA_HOME)
               - config/ (tool config, XDG_CONFIG_HOME)
               - _/ (AGT system folder)
@@ -372,7 +393,7 @@ ARCHITECTURE
               │   └── .git            # File: "gitdir: ../.bare/worktrees/main"
               └── sessions/           # Agent session folders
                   └── agent-001/      # Session folder
-                      ├── sandbox/    # Agent runs here (git worktree)
+                      ├── sandbox/    # Agent runs here (agt-sandbox workspace)
                       │   └── .git    # File: "gitdir: ../../../.bare/worktrees/sandbox"
                       ├── xdg/        # Tool state (XDG_DATA_HOME)
                       ├── config/     # Tool config (XDG_CONFIG_HOME)
