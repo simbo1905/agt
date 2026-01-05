@@ -37,7 +37,7 @@ Steps:
 2. Start autocommit in background
 3. Kill the process mid-way (SIGKILL)
 4. Examine state:
-   - Is worktree intact?
+   - Is sandbox intact?
    - Is index intact?
    - Is timestamp file correct?
 5. Try running autocommit again
@@ -53,8 +53,8 @@ Steps:
 1. Start fork operation
 2. Kill mid-way
 3. Examine state:
-   - Partial branch created?
-   - Partial worktree created?
+   - Partial shadow branch created?
+   - Partial session folder created?
 4. Clean up manually or retry fork
 5. Verify can reach good state
 
@@ -88,27 +88,27 @@ Steps:
 
 Success: Graceful error handling
 
-### Scenario 8.5: Missing Worktree
+### Scenario 8.5: Missing Session Folder
 
-Test when worktree is deleted externally.
+Test when session folder is deleted externally.
 
 Steps:
 1. Fork session
-2. Delete worktree directory: `rm -rf sessions/session-id`
+2. Delete session folder: `rm -rf sessions/session-id`
 3. Try various operations:
    - autocommit (should fail gracefully)
    - list-sessions (should show issue)
    - prune (should handle gracefully)
 
-Success: Missing worktree detected, not crashed
+Success: Missing session folder detected, not crashed
 
-### Scenario 8.6: Detached Worktree
+### Scenario 8.6: Detached Sandbox
 
-Test when .git file is removed from worktree.
+Test when .git file is removed from sandbox.
 
 Steps:
 1. Fork session
-2. Delete the `.git` file inside worktree
+2. Delete the `.git` file inside sandbox
 3. Try autocommit
 4. Verify error handling
 
@@ -226,13 +226,13 @@ Steps:
 
 Success: Lock files handled per standard git
 
-### Scenario 8.15: Orphaned Worktrees
+### Scenario 8.15: Orphaned Session Folders
 
 Test cleanup of orphaned state.
 
 Steps:
 1. Fork session
-2. Manually delete branch (but leave worktree)
+2. Manually delete shadow branch (but leave session folder)
 3. Try operations
 4. Clean up properly
 5. Verify no residual state

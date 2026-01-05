@@ -15,9 +15,7 @@ pub fn run(
 ) -> Result<()> {
     if args.is_empty() {
         // Show help if no git command provided
-        Command::new(find_git_binary()?)
-            .arg("--help")
-            .status()?;
+        Command::new(find_git_binary()?).arg("--help").status()?;
         return Ok(());
     }
 

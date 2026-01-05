@@ -68,7 +68,7 @@ fn test_passthrough_uses_git_path() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn test_init_creates_bare_repo() -> Result<(), Box<dyn std::error::Error>> {
+fn test_clone_creates_repo_layout() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = TempDir::new()?;
 
     // Create a local bare repo to clone from
@@ -79,26 +79,26 @@ fn test_init_creates_bare_repo() -> Result<(), Box<dyn std::error::Error>> {
     let target = tmp.path().join("target");
     fs::create_dir_all(&target)?;
 
-    // Test agt init
     agt_cmd_with_git()?
-        .args(["init", source.to_str().unwrap()])
+        .args(["clone", source.to_str().unwrap()])
         .current_dir(&target)
         .assert()
         .success();
 
-    // Verify bare repo exists
-    assert!(target.join("source.git").exists());
-    assert!(target.join("source").exists());
+    let repo_root = target.join("source");
+    let bare_repo = target.join("source.git");
+    let main_worktree = repo_root.join("main");
+    assert!(bare_repo.exists());
+    assert!(main_worktree.exists());
 
     // Verify .git file points to admin directory (linked worktree pattern)
-    let git_file = target.join("source/.git");
+    let git_file = main_worktree.join(".git");
     assert!(git_file.exists());
     let git_content = fs::read_to_string(&git_file)?;
-    // Should point to source.git/worktrees/source/
-    assert!(git_content.contains("source.git/worktrees/source"));
+    assert!(git_content.contains("source.git/worktrees/main"));
 
     // Verify worktree admin directory exists with proper metadata
-    let admin_dir = target.join("source.git/worktrees/source");
+    let admin_dir = bare_repo.join("worktrees/main");
     assert!(admin_dir.exists());
     assert!(admin_dir.join("HEAD").exists());
     assert!(admin_dir.join("commondir").exists());
@@ -106,15 +106,15 @@ fn test_init_creates_bare_repo() -> Result<(), Box<dyn std::error::Error>> {
     assert!(admin_dir.join("index").exists());
 
     // Verify agt directory exists
-    assert!(target.join("source.git/agt").exists());
-    assert!(target.join("source.git/agt/timestamps").exists());
-    assert!(target.join("source.git/agt/sessions").exists());
+    assert!(bare_repo.join("agt").exists());
+    assert!(bare_repo.join("agt/timestamps").exists());
+    assert!(bare_repo.join("agt/sessions").exists());
 
     Ok(())
 }
 
 #[test]
-fn test_init_sets_default_config_and_worktree() -> Result<(), Box<dyn std::error::Error>> {
+fn test_clone_sets_default_config() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = TempDir::new()?;
 
     let source = tmp.path().join("source");
@@ -125,12 +125,12 @@ fn test_init_sets_default_config_and_worktree() -> Result<(), Box<dyn std::error
     fs::create_dir_all(&target)?;
 
     agt_cmd_with_git()?
-        .args(["init", source.to_str().unwrap()])
+        .args(["clone", source.to_str().unwrap()])
         .current_dir(&target)
         .assert()
         .success();
 
-    let config_path = target.join("source/.agt/config");
+    let config_path = target.join("source/main/.agt/config");
     let config_contents = fs::read_to_string(&config_path)?;
     // Verify agt config is set
     assert!(config_contents.contains("[agt]"));
@@ -143,7 +143,7 @@ fn test_init_sets_default_config_and_worktree() -> Result<(), Box<dyn std::error
     assert!(!bare_config_contents.contains("bare = false"));
 
     // Verify worktree is usable (gix can open it and sees work_dir)
-    let worktree = target.join("source");
+    let worktree = target.join("source/main");
     let repo = gix::open(&worktree)?;
     assert!(repo.work_dir().is_some());
 
@@ -151,25 +151,26 @@ fn test_init_sets_default_config_and_worktree() -> Result<(), Box<dyn std::error
 }
 
 #[test]
-fn test_fork_creates_branch_and_worktree() -> Result<(), Box<dyn std::error::Error>> {
+fn test_session_new_creates_shadow_branch_and_session() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_basic_repo()?;
 
-    // Test agt fork
     agt_cmd_with_git()?
-        .args(["fork", "--session-id", "test-session"])
+        .args(["session", "new", "--id", "test-session"])
         .current_dir(repo.worktree())
         .assert()
         .success();
 
-    // Verify branch exists
+    // Verify shadow branch exists
     let gix_repo = gix::open(repo.worktree())?;
     let branch_name = "agtsessions/test-session";
     assert!(gix_repo
         .find_reference(&format!("refs/heads/{branch_name}"))
         .is_ok());
 
-    // Verify worktree exists
-    assert!(repo.worktree().join("sessions/test-session").exists());
+    // Verify session folder and sandbox exist
+    let session_root = repo.repo_root().join("sessions/test-session");
+    assert!(session_root.exists());
+    assert!(session_root.join("sandbox").exists());
 
     // Verify timestamp file exists
     let timestamp_file = repo.bare.join("agt/timestamps/test-session");
@@ -186,9 +187,8 @@ fn test_fork_creates_branch_and_worktree() -> Result<(), Box<dyn std::error::Err
 fn test_autocommit_with_timestamp_override() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_session()?;
 
-    // Create a test file
-    let session_path = repo.worktree().join("sessions/test-session");
-    fs::write(session_path.join("test.txt"), "test content")?;
+    let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
+    fs::write(sandbox_path.join("test.txt"), "test content")?;
 
     // Get current timestamp
     let now = std::time::SystemTime::now()
@@ -199,55 +199,49 @@ fn test_autocommit_with_timestamp_override() -> Result<(), Box<dyn std::error::E
     agt_cmd_with_git()?
         .args([
             "autocommit",
-            "-C",
-            session_path.to_str().unwrap(),
             "--session-id",
             "test-session",
             "--timestamp",
             &(now - 3600).to_string(), // Force inclusion
         ])
-        .current_dir(repo.worktree())
+        .current_dir(&sandbox_path)
         .assert()
         .success();
 
-    // Verify commit has two parents and contains the file
+    // Verify shadow commit has two parents and contains the file in sandbox/
     let repo = gix::open(repo.worktree())?;
     let mut branch_ref = repo.find_reference("refs/heads/agtsessions/test-session")?;
     let commit = branch_ref.peel_to_commit()?;
     assert_eq!(commit.parent_ids().count(), 2);
 
     let tree = commit.tree()?;
-    let entry = tree.lookup_entry_by_path(std::path::Path::new("test.txt"))?;
+    let entry = tree.lookup_entry_by_path(std::path::Path::new("sandbox/test.txt"))?;
     assert!(entry.is_some());
 
     Ok(())
 }
 
 #[test]
-fn test_autocommit_dry_run_output_includes_worktree() -> Result<(), Box<dyn std::error::Error>> {
+fn test_autocommit_dry_run_output_includes_sandbox() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_session()?;
 
-    let session_path = repo.worktree().join("sessions/test-session");
-    fs::write(session_path.join("dryrun.txt"), "x")?;
+    let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
+    fs::write(sandbox_path.join("dryrun.txt"), "x")?;
 
     let output = agt_cmd_with_git()?
         .args([
             "autocommit",
-            "-C",
-            session_path.to_str().unwrap(),
             "--session-id",
             "test-session",
             "--timestamp",
             "0",
             "--dry-run",
         ])
-        .current_dir(repo.worktree())
+        .current_dir(&sandbox_path)
         .output()?;
 
     let stdout = String::from_utf8(output.stdout)?;
     assert!(stdout.contains("Dry run: session test-session"));
-    assert!(stdout.contains("Worktree:"));
-    assert!(stdout.contains(session_path.to_str().unwrap()));
     assert!(stdout.contains("M "));
 
     Ok(())
@@ -257,36 +251,32 @@ fn test_autocommit_dry_run_output_includes_worktree() -> Result<(), Box<dyn std:
 fn test_autocommit_parent2_is_user_branch_head() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_session()?;
 
-    let session_path = repo.worktree().join("sessions/test-session");
-    fs::write(session_path.join("p2.txt"), "p2")?;
+    let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
+    fs::write(sandbox_path.join("p2.txt"), "p2")?;
 
     agt_cmd_with_git()?
         .args([
             "autocommit",
-            "-C",
-            session_path.to_str().unwrap(),
             "--session-id",
             "test-session",
             "--timestamp",
             "0",
         ])
-        .current_dir(repo.worktree())
+        .current_dir(&sandbox_path)
         .assert()
         .success();
 
-    // A second autocommit ensures parent1 differs from parent2 after the agent branch advances.
-    fs::write(session_path.join("p2b.txt"), "p2b")?;
+    // A second autocommit ensures parent1 differs from parent2 after the shadow branch advances.
+    fs::write(sandbox_path.join("p2b.txt"), "p2b")?;
     agt_cmd_with_git()?
         .args([
             "autocommit",
-            "-C",
-            session_path.to_str().unwrap(),
             "--session-id",
             "test-session",
             "--timestamp",
             "0",
         ])
-        .current_dir(repo.worktree())
+        .current_dir(&sandbox_path)
         .assert()
         .success();
 
@@ -306,37 +296,33 @@ fn test_autocommit_parent2_is_user_branch_head() -> Result<(), Box<dyn std::erro
 #[test]
 fn test_autocommit_records_deletions() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_session()?;
-    let session_path = repo.worktree().join("sessions/test-session");
+    let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
 
-    fs::write(session_path.join("delete-me.txt"), "to be deleted")?;
+    fs::write(sandbox_path.join("delete-me.txt"), "to be deleted")?;
 
     agt_cmd_with_git()?
         .args([
             "autocommit",
-            "-C",
-            session_path.to_str().unwrap(),
             "--session-id",
             "test-session",
             "--timestamp",
             "0",
         ])
-        .current_dir(repo.worktree())
+        .current_dir(&sandbox_path)
         .assert()
         .success();
 
-    fs::remove_file(session_path.join("delete-me.txt"))?;
+    fs::remove_file(sandbox_path.join("delete-me.txt"))?;
 
     agt_cmd_with_git()?
         .args([
             "autocommit",
-            "-C",
-            session_path.to_str().unwrap(),
             "--session-id",
             "test-session",
             "--timestamp",
             "0",
         ])
-        .current_dir(repo.worktree())
+        .current_dir(&sandbox_path)
         .assert()
         .success();
 
@@ -344,7 +330,7 @@ fn test_autocommit_records_deletions() -> Result<(), Box<dyn std::error::Error>>
     let mut branch_ref = repo.find_reference("refs/heads/agtsessions/test-session")?;
     let commit = branch_ref.peel_to_commit()?;
     let tree = commit.tree()?;
-    let entry = tree.lookup_entry_by_path(std::path::Path::new("delete-me.txt"))?;
+    let entry = tree.lookup_entry_by_path(std::path::Path::new("sandbox/delete-me.txt"))?;
     assert!(entry.is_none());
 
     Ok(())
@@ -354,23 +340,21 @@ fn test_autocommit_records_deletions() -> Result<(), Box<dyn std::error::Error>>
 #[test]
 fn test_autocommit_preserves_symlink_entries() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_session()?;
-    let session_path = repo.worktree().join("sessions/test-session");
+    let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
 
-    fs::write(session_path.join("target.txt"), "target")?;
+    fs::write(sandbox_path.join("target.txt"), "target")?;
     #[cfg(unix)]
-    std::os::unix::fs::symlink("target.txt", session_path.join("link.txt"))?;
+    std::os::unix::fs::symlink("target.txt", sandbox_path.join("link.txt"))?;
 
     agt_cmd_with_git()?
         .args([
             "autocommit",
-            "-C",
-            session_path.to_str().unwrap(),
             "--session-id",
             "test-session",
             "--timestamp",
             "0",
         ])
-        .current_dir(repo.worktree())
+        .current_dir(&sandbox_path)
         .assert()
         .success();
 
@@ -378,18 +362,18 @@ fn test_autocommit_preserves_symlink_entries() -> Result<(), Box<dyn std::error:
     let mut branch_ref = repo.find_reference("refs/heads/agtsessions/test-session")?;
     let commit = branch_ref.peel_to_commit()?;
     let tree = commit.tree()?;
-    let entry = tree.lookup_entry_by_path(std::path::Path::new("link.txt"))?;
-    let entry = entry.expect("expected symlink entry");
+    let entry = tree.lookup_entry_by_path(std::path::Path::new("sandbox/link.txt"))?;
+    let entry = entry.expect("expected symlink entry in sandbox/");
     assert_eq!(entry.mode().kind(), gix::object::tree::EntryKind::Link);
 
     Ok(())
 }
 
 #[test]
-fn test_git_mode_filters_branches() -> Result<(), Box<dyn std::error::Error>> {
-    let repo = setup_repo_with_agent_branch()?;
+fn test_git_mode_filters_shadow_branches() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_repo_with_shadow_branch()?;
 
-    // Test git branch command (should filter agent branches)
+    // Test git branch command (should filter shadow branches)
     let output = git_mode_cmd(repo.tmp())?
         .args(["branch"])
         .current_dir(repo.worktree())
@@ -432,9 +416,9 @@ fn test_git_mode_add_and_commit() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_agt_mode_shows_all_branches() -> Result<(), Box<dyn std::error::Error>> {
-    let repo = setup_repo_with_agent_branch()?;
+    let repo = setup_repo_with_shadow_branch()?;
 
-    // Test agt branch command (should show all branches)
+    // Test agt branch command (should show all branches including shadow branches)
     let output = agt_cmd_with_git()?
         .args(["branch", "-a"])
         .current_dir(repo.worktree())
@@ -451,6 +435,7 @@ struct TestRepo {
     tmp: TempDir,
     worktree: PathBuf,
     bare: PathBuf,
+    root: PathBuf,
 }
 
 impl TestRepo {
@@ -461,6 +446,10 @@ impl TestRepo {
     fn tmp(&self) -> &TempDir {
         &self.tmp
     }
+
+    fn repo_root(&self) -> &Path {
+        &self.root
+    }
 }
 
 fn setup_basic_repo() -> Result<TestRepo, Box<dyn std::error::Error>> {
@@ -469,7 +458,8 @@ fn setup_basic_repo() -> Result<TestRepo, Box<dyn std::error::Error>> {
     fs::create_dir_all(&bare)?;
     init_bare_repo_with_commit(&bare)?;
 
-    let worktree = tmp.path().join("repo");
+    let root = tmp.path().to_path_buf();
+    let worktree = root.join("main");
     let status = Command::new(ensure_worktree_tool()?)
         .args([
             "add",
@@ -489,6 +479,7 @@ fn setup_basic_repo() -> Result<TestRepo, Box<dyn std::error::Error>> {
         tmp,
         worktree,
         bare,
+        root,
     })
 }
 
@@ -499,7 +490,7 @@ fn setup_repo_with_session() -> Result<TestRepo, Box<dyn std::error::Error>> {
 
     // Create session
     agt_cmd_with_git()?
-        .args(["fork", "--session-id", "test-session"])
+        .args(["session", "new", "--id", "test-session"])
         .current_dir(repo.worktree())
         .assert()
         .success();
@@ -507,7 +498,7 @@ fn setup_repo_with_session() -> Result<TestRepo, Box<dyn std::error::Error>> {
     Ok(repo)
 }
 
-fn setup_repo_with_agent_branch() -> Result<TestRepo, Box<dyn std::error::Error>> {
+fn setup_repo_with_shadow_branch() -> Result<TestRepo, Box<dyn std::error::Error>> {
     let repo = setup_basic_repo()?;
 
     write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
@@ -518,7 +509,7 @@ fn setup_repo_with_agent_branch() -> Result<TestRepo, Box<dyn std::error::Error>
         &gix_repo,
         repo.worktree(),
         "refs/heads/agtsessions/test-agent",
-        "Agent commit",
+        "Shadow commit",
         "agt@local",
     )?;
 
@@ -675,17 +666,19 @@ fn find_real_git() -> Result<PathBuf, Box<dyn std::error::Error>> {
     }
 
     // Find git in PATH
-    let output = Command::new("which")
-        .arg("git")
-        .output()?;
-    
+    let output = Command::new("which").arg("git").output()?;
+
     if output.status.success() {
         let path = String::from_utf8(output.stdout)?.trim().to_string();
         return Ok(PathBuf::from(path));
     }
 
     // Fallback locations
-    for path in ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"] {
+    for path in [
+        "/usr/bin/git",
+        "/usr/local/bin/git",
+        "/opt/homebrew/bin/git",
+    ] {
         let p = PathBuf::from(path);
         if p.exists() {
             return Ok(p);

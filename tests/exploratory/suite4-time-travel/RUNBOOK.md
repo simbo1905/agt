@@ -41,7 +41,7 @@ Steps:
 6. Delete file B, autocommit
 7. Record all commit SHAs
 
-Success: 5 commits on agent branch, each with different file states
+Success: 5 commits on shadow branch, each with different file states
 
 ### Scenario 4.2: Roll Back One Commit
 

@@ -132,14 +132,15 @@ Test with git hooks.
 
 ### Suite 18: Sandbox Integration
 
-Test with bwrap (bubblewrap).
+Test with toybox chroot jails.
 
 **Scenario**:
-1. Spawn agent in bwrap jail
+1. Spawn agent in chroot jail (using toybox)
 2. Bind-mount agt as `/usr/bin/git`
-3. Agent works normally
-4. Verify agent cannot see outside jail
-5. Verify agent cannot see other agent sessions
+3. Bind-mount sandbox folder as agent's working directory
+4. Agent works normally
+5. Verify agent cannot see outside jail
+6. Verify agent cannot see other agent sessions
 
 **Focus**:
 - Jail configuration that works
@@ -153,7 +154,7 @@ Test that agent cannot escape intended boundaries.
 **Scenario**:
 1. Agent is given limited view
 2. Try to access agent-only commands
-3. Try to read/write outside worktree
+3. Try to read/write outside sandbox
 4. Try to corrupt shared state
 
 **Focus**: Defense in depth

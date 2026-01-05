@@ -99,17 +99,19 @@ fn find_real_git() -> Result<PathBuf, Box<dyn std::error::Error>> {
     }
 
     // Find git in PATH
-    let output = Command::new("which")
-        .arg("git")
-        .output()?;
-    
+    let output = Command::new("which").arg("git").output()?;
+
     if output.status.success() {
         let path = String::from_utf8(output.stdout)?.trim().to_string();
         return Ok(PathBuf::from(path));
     }
 
     // Fallback locations
-    for path in ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git"] {
+    for path in [
+        "/usr/bin/git",
+        "/usr/local/bin/git",
+        "/opt/homebrew/bin/git",
+    ] {
         let p = PathBuf::from(path);
         if p.exists() {
             return Ok(p);
@@ -218,9 +220,13 @@ fn test_git_add_all_respects_gitignore() -> Result<(), Box<dyn std::error::Error
     let tree = commit.tree()?;
 
     // Check include_me.txt is present
-    assert!(tree.lookup_entry_by_path(Path::new("include_me.txt"))?.is_some());
+    assert!(tree
+        .lookup_entry_by_path(Path::new("include_me.txt"))?
+        .is_some());
     // Check .gitignore is present
-    assert!(tree.lookup_entry_by_path(Path::new(".gitignore"))?.is_some());
+    assert!(tree
+        .lookup_entry_by_path(Path::new(".gitignore"))?
+        .is_some());
 
     // Check ignore_me.txt is ABSENT
     // This assertion is expected to FAIL if git_porcelain.rs doesn't handle ignore
@@ -287,9 +293,14 @@ fn test_git_commit_multiple_messages() -> Result<(), Box<dyn std::error::Error>>
     let repo_gix = gix::open(worktree)?;
     let head = repo_gix.head()?.peel_to_commit_in_place()?.id;
     let commit = repo_gix.find_object(head)?.into_commit();
-    
+
     assert_eq!(commit.message()?.summary().as_bstr(), "Title");
-    assert!(commit.message()?.body.unwrap().to_string().contains("Body paragraph"));
+    assert!(commit
+        .message()?
+        .body
+        .unwrap()
+        .to_string()
+        .contains("Body paragraph"));
 
     Ok(())
 }

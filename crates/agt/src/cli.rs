@@ -22,10 +22,10 @@ pub struct Cli {
     pub args: Vec<String>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum Commands {
-    /// Initialize a new agt-managed repository
-    Init {
+    /// Clone a remote repository into agt-managed structure
+    Clone {
         /// Remote repository URL
         remote_url: String,
         /// Target directory (default: current dir)
@@ -33,15 +33,9 @@ pub enum Commands {
         path: Option<PathBuf>,
     },
 
-    /// Create a new agent session with its own worktree and branch
-    Fork {
-        /// Unique identifier for the session
-        #[arg(long)]
-        session_id: String,
-        /// Starting point: branch name, commit, or existing session ID
-        #[arg(long)]
-        from: Option<String>,
-    },
+    /// Session management commands
+    #[command(subcommand)]
+    Session(SessionCommands),
 
     /// Auto-commit all modified files to the agent session branch
     Autocommit {
@@ -54,21 +48,51 @@ pub enum Commands {
         /// Show what would be committed without committing
         #[arg(long)]
         dry_run: bool,
-    },
-
-    /// List all agent sessions with their status
-    ListSessions,
-
-    /// Remove an agent session's worktree and optionally its branch
-    PruneSession {
-        /// Session to prune
-        #[arg(long)]
-        session_id: String,
-        /// Also delete the session branch
-        #[arg(long)]
-        delete_branch: bool,
+        /// Comma-separated list of sibling directories to archive (e.g. "xdg,config")
+        #[arg(long, value_delimiter = ',')]
+        siblings: Option<Vec<String>>,
     },
 
     /// Show agt-specific status
     Status,
+}
+
+#[derive(Subcommand, Clone)]
+pub enum SessionCommands {
+    /// Create a new agent session for a fresh ticket
+    New {
+        #[arg(long)]
+        id: Option<String>,
+        /// Starting point: branch name, commit, or session ID
+        #[arg(long)]
+        from: Option<String>,
+        /// Tool profile for folder setup
+        #[arg(long, default_value = "default")]
+        profile: String,
+    },
+
+    /// Export session's user branch to remote
+    Export {
+        #[arg(long)]
+        session_id: Option<String>,
+    },
+
+    /// Remove a session
+    Remove {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        delete_branch: bool,
+    },
+
+    /// Fork a session for parallel work
+    Fork {
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        id: Option<String>,
+    },
+
+    /// List sessions
+    List,
 }

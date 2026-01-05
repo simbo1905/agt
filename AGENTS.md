@@ -30,9 +30,9 @@ agt/
 │   │       ├── filter.rs     # Branch/commit filtering logic
 │   │       ├── commands/
 │   │       │   ├── mod.rs
-│   │       │   ├── init.rs       # agt init
-│   │       │   ├── fork.rs       # agt fork
-│   │       │   ├── autocommit.rs # agt autocommit
+│   │       │   ├── clone.rs       # agt clone
+│   │       │   ├── session.rs     # agt session {new,export,remove,fork}
+│   │       │   ├── autocommit.rs  # agt autocommit
 │   │       │   └── passthrough.rs # git command passthrough
 │   │       └── scanner.rs    # Timestamp-based file scanning
 │   └── agt-worktree/   # Worktree helper binary
@@ -86,6 +86,19 @@ AGT uses its own configuration files (separate from git's):
 - AGT needs to know where the real git is located
 - Clean separation: git's config is for git, AGT's config is for AGT
 
+### Terminology
+
+See `DESIGN_20260104.md` for the full terminology table. Key terms:
+
+| Term | World | Meaning |
+|------|-------|---------|
+| **Session** | Disk | An agent run with a unique ID and folder on disk |
+| **Session folder** | Disk | `sessions/<id>/` - contains sandbox and tool state |
+| **Sandbox** | Disk | `sessions/<id>/sandbox/` - where the agent runs (jailed) |
+| **Shadow branch** | Git | `agtsessions/<id>` - where autocommits are stored |
+| **Shadow tree** | Git | The tree in a shadow commit (mirrors session folder) |
+| **Profile** | Config | Tool-specific folder requirements (opencode, cursor, etc.) |
+
 ### Sandboxing Strategy
 
 We prioritize robust isolation for agents to enable "YOLO mode" where agents can run untrusted code safely.
@@ -94,15 +107,29 @@ We prioritize robust isolation for agents to enable "YOLO mode" where agents can
 1.  **Infrastructure**:
     -   **Linux VM/VPS**: The primary hosting target. We assume the ability to run a VM (e.g., via Lima) or provision a cheap VPS.
     -   **Chroot Jails**: We use a custom fork of [toybox](https://github.com/simbo1905/toybox) (branch `agt-agent-sandbox`, vendored in `vendor/toybox`) to construct lightweight chroot jails.
-    -   **Isolation**: This allows agents to modify system files within the jail without affecting the host, and protects the host from malicious/accidental damage.
+    -   **Isolation**: Agents are jailed into their sandbox folder, protecting the host from malicious/accidental damage.
 
-2.  **Implementation**:
+2.  **Session Layout**:
+    ```
+    sessions/<id>/              # Session folder
+    ├── sandbox/                # Agent runs here (jailed)
+    │   ├── src/
+    │   └── .git
+    ├── xdg/                    # Tool state (bind-mounted to ~/.local/share)
+    ├── config/                 # Tool config (bind-mounted to ~/.config)
+    └── _/                      # AGT system folder
+        └── index               # Captured git index
+    ```
+
+3.  **Implementation**:
     -   **Agent Spawner**: A process manager running on the host sets up the jail.
     -   **Jail Construction**: Uses `toybox` to create a minimal rootfs.
-    -   **Bind Mounts**: Mounts the agent worktree and `agt` binary (as `/usr/bin/git`) into the jail.
+    -   **Bind Mounts**: Mounts the sandbox and `agt` binary (as `/usr/bin/git`) into the jail. Profile-specific folders (xdg, config) are bind-mounted to expected locations.
     -   **Execution**: The agent process runs inside the jail, perceiving a clean environment.
 
-3.  **Why this approach?**
+4.  **Profiles**: Different tools require different folders. A profile defines what folders exist in the session folder and where they're mounted in the jail.
+
+5.  **Why this approach?**
     -   **Power Developer Focus**: We target users who are comfortable with VMs/VPS, avoiding the "black box" limitations of container-only solutions.
     -   **Flexibility**: Allows running any tool chain that can be installed in the jail/VM.
     -   **Scalability**: Large bare repos and aggressive agent activity are better handled in dedicated VMs than on a user's main desktop file system.
@@ -116,27 +143,14 @@ When spawning git and reading its stdout:
 
 ### Commands
 
-**`agt init <remote-url>`**
-1. Clone remote as bare repo: `<name>.git`
-2. Create adjacent worktree: `<name>/`
-3. The worktree's `.git` is a file pointing to `../<name>.git`
-4. Create `.agt/config` with default settings
-5. Initialise `.git/agt/` directory structure
-6. See: https://gist.github.com/simbo1905/22accc8dc39583672aa6f0483a800429
+See [docs/agt.1.txt](docs/agt.1.txt) for the complete CLI reference.
 
-**`agt fork --session-id <id>`**
-1. Create branch `agtsessions/<id>` from current HEAD (or `--from`)
-2. Create worktree at `sessions/<id>/`
-3. Initialise timestamp file at `.git/agt/timestamps/<id>`
-
-**`agt autocommit -C <path> --session-id <id>`**
-1. Read last timestamp from `.git/agt/timestamps/<id>`
-2. Scan `<path>` for files with mtime >= timestamp (use jwalk or similar)
-3. Build tree object from found files (ignore .gitignore)
-4. Create a commit on `agtsessions/<id>` with:
-   - Parent 1: tip of `agtsessions/<id>`
-   - Parent 2: HEAD of worktree's tracked branch
-5. Update timestamp file
+Key commands:
+- `agt clone <url>` - Clone remote repo into agt-managed structure
+- `agt session new` - Create new session for a ticket
+- `agt session export` - Push user branch to remote
+- `agt session remove` - Remove a session
+- `agt autocommit` - Create shadow commit
 
 ### Testing Requirements
 
@@ -183,11 +197,12 @@ ls dist/
 
 ## Important Notes
 
-1. **Never use the regular Git index for autocommit** - build trees directly from file scanning
+1. **Never use the regular Git index for autocommit** - build shadow trees directly from session folder scanning
 2. **Timestamps must be overridable for testing** - use `--timestamp` flag
-3. **Worktrees share the object store** - this is Git's built-in concurrency handling
-4. **Agent branches are local-only** - configure refspecs to prevent pushing
+3. **Git worktrees share the object store** - this is Git's built-in concurrency handling (implementation detail)
+4. **Shadow branches are local-only** - configure refspecs to prevent pushing
 5. **Real git passthrough** - AGT spawns real git for full compatibility
+6. **Shadow tree = session folder** - the shadow tree mirrors the session folder structure exactly
 
 ## Reference Documentation
 

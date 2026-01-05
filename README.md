@@ -48,13 +48,15 @@ agt/
 
 A dual-mode Git wrapper that spawns the real git binary and filters its output:
 
-- **As `git`**: Spawns real git, filters stdout to hide agent branches/commits
-- **As `agt`**: Full visibility plus agent session management commands
+- **As `git`**: Spawns real git, filters stdout to hide shadow branches/commits
+- **As `agt`**: Full visibility plus session management commands
 
 Key commands:
-- `agt init <remote>` - Clone to bare repo with adjacent worktree
-- `agt fork --session-id <id>` - Create new agent session
-- `agt autocommit -C <path> --session-id <id>` - Snapshot all modified files
+- `agt clone <url>` - Clone remote repo into agt-managed structure
+- `agt session new [--id <id>]` - Create new agent session
+- `agt session export` - Push user branch to remote origin
+- `agt session remove --id <id>` - Remove a session
+- `agt autocommit --session-id <id>` - Snapshot session state
 
 See [docs/agt.1.txt](docs/agt.1.txt) for the complete man page.
 
@@ -100,15 +102,18 @@ cat >> ~/.agtconfig << 'EOF'
     branchPrefix = agtsessions/
 EOF
 
-# Initialize a project with agt
-dist/agt init https://github.com/user/project.git
-cd project
+# Clone a project with agt
+dist/agt clone https://github.com/user/project.git
+cd project/main
 
 # Create an agent session
-agt fork --session-id agent-001
+agt session new --id agent-001
 
-# After agent work, autocommit
+# After agent work, autocommit (captures entire session folder)
 agt autocommit -C sessions/agent-001 --session-id agent-001
+
+# Export user branch to remote
+agt session export --session-id agent-001
 ```
 
 ## Development
@@ -144,11 +149,24 @@ The `agt` and `agt-worktree` binaries should be in the same folder.
 ## Design Philosophy
 
 1. **Single object store** - One bare repo per project, all agents share it
-2. **Worktree isolation** - Each agent session gets its own worktree and index
-3. **Dual-parent commits** - Agent commits link to both agent history and user branch
-4. **Local-only agent branches** - Never pushed to remotes, only user branches sync
+2. **Session isolation** - Each agent session gets its own folder with sandbox and state
+3. **Dual-parent shadow commits** - Shadow commits link to both shadow branch history and user branch
+4. **Local-only shadow branches** - Never pushed to remotes, only user branches sync
 5. **Timestamp-based scanning** - Fast file discovery without index manipulation
 6. **Real git passthrough** - Full git compatibility via spawning real git binary
+7. **Profiles** - Tool-specific folder requirements (opencode, cursor, claude-code, etc.)
+
+## Terminology
+
+| Term | World | Meaning |
+|------|-------|---------|
+| **Session** | Disk | An agent run with a unique ID and folder on disk |
+| **Session folder** | Disk | `sessions/<id>/` - contains sandbox and tool state |
+| **Sandbox** | Disk | `sessions/<id>/sandbox/` - where the agent runs (jailed) |
+| **Shadow branch** | Git | `agtsessions/<id>` - where autocommits are stored |
+| **Shadow tree** | Git | The tree in a shadow commit (mirrors session folder) |
+
+See `DESIGN_20260104.md` for full architecture details.
 
 ## How It Works
 
@@ -162,13 +180,13 @@ This gives full git compatibility while hiding agent implementation details from
 
 ## Corner Cases
 
-- Detached HEAD in agent worktrees is unsupported; autocommit expects a branch checkout.
+- Detached HEAD in sandbox is unsupported; autocommit expects a branch checkout.
 - Symlink cycles are ignored during filesystem scans; symlinks are not followed.
 - Symlinks are stored as symlinks; targets are captured as-is (external symlinks may be broken when checked out elsewhere).
 
 ## Known Limitations
 
-- **Merging agent branches back** - Not yet implemented. Use manual `git merge` to integrate agent work into user branches.
+- **Merging shadow branches back** - Not yet implemented. Use manual `git merge` to integrate agent work into user branches.
 
 ## Environment Variables
 

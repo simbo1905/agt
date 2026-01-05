@@ -3,12 +3,18 @@
 ## Objective
 
 Verify the complete lifecycle of a single agent session:
-1. Initialize agt-managed repository
-2. Fork a session
+1. Clone repository with agt
+2. Create a new session
 3. Agent makes changes
 4. Autocommit captures changes
 5. User makes concurrent commits
-6. Agent changes merged back
+6. Export agent work to remote
+
+## Terminology
+
+- **Session folder**: `sessions/<id>/` - contains sandbox and tool state
+- **Sandbox**: `sessions/<id>/sandbox/` - where the agent runs
+- **Shadow branch**: `agtsessions/<id>` - where autocommits are stored
 
 ## Working Directory
 
@@ -23,42 +29,47 @@ Verify the complete lifecycle of a single agent session:
 ## Reference
 
 Read `docs/agt.1.txt` thoroughly, especially:
-- `agt init` command
-- `agt fork` command
+- `agt clone` command
+- `agt session new` command
+- `agt session export` command
 - `agt autocommit` command
 - Repository Layout section
-- Commit Graph section
 
 ## Scenarios
 
-### Scenario 2.1: Repository Initialization
+### Scenario 2.1: Repository Clone
 
-Use `agt init` to clone a test repository.
+Use `agt clone` to set up an agt-managed repository.
 
 Steps:
-1. Create a source bare repo with some initial content
-2. Run `agt init` pointing to that source
+1. Create a source repo on GitHub/GitLab (or use a test repo)
+2. Run `agt clone <url>`
 3. Verify the expected layout:
-   - `<name>.git/` - bare repository
-   - `<name>/` - main worktree
-   - `<name>/.git` - file pointing to bare repo
-   - `<name>.git/agt/timestamps/` - exists
-   - `<name>.git/agt/sessions/` - exists
+   - `<name>/` - project directory
+   - `<name>/.bare/` - bare repository
+   - `<name>/.git` - file containing `gitdir: .bare`
+   - `<name>/main/` - main worktree (user's working directory)
+   - `<name>/main/.git` - file pointing to `../.bare/worktrees/main`
+   - `<name>/.bare/agt/timestamps/` - exists
+   - `<name>/.bare/agt/sessions/` - exists
 
-Success: Layout matches docs/agt.1.txt "Repository Layout" section
+Success: Layout matches docs/agt.1.txt ARCHITECTURE section
 
-### Scenario 2.2: Fork a Session
+### Scenario 2.2: Create a New Session
 
 Create an agent session.
 
 Steps:
-1. Navigate to the main worktree
-2. Run `agt fork --session-id agent-001`
+1. Navigate to project directory: `cd <name>`
+2. Run `agt session new --id agent-001`
 3. Verify:
-   - Branch `agtsessions/agent-001` exists
-   - Worktree at `sessions/agent-001/` exists
-   - Timestamp file at `.git/agt/timestamps/agent-001` exists
-   - Can `cd sessions/agent-001` and it's a valid git worktree
+   - Shadow branch `agtsessions/agent-001` exists
+   - Session folder at `sessions/agent-001/` exists
+   - Sandbox at `sessions/agent-001/sandbox/` exists
+   - xdg folder at `sessions/agent-001/xdg/` exists
+   - config folder at `sessions/agent-001/config/` exists
+   - Timestamp file at `.bare/agt/timestamps/agent-001` exists
+   - Can `cd sessions/agent-001/sandbox` and it's a valid git checkout
 
 Success: Session infrastructure created correctly
 
@@ -67,37 +78,41 @@ Success: Session infrastructure created correctly
 Simulate agent making changes without committing.
 
 Steps:
-1. Enter the session worktree: `cd sessions/agent-001`
+1. Enter the sandbox: `cd sessions/agent-001/sandbox`
 2. Create/modify several files
-3. Verify files exist in worktree
+3. Verify files exist in sandbox
 4. Check `git status` shows changes (but not committed)
 
-Success: Normal file operations work in session worktree
+Success: Normal file operations work in sandbox
 
 ### Scenario 2.4: Autocommit Captures Changes
 
 Use autocommit to snapshot the agent's work.
 
 Steps:
-1. From main repo, run autocommit for the session
-2. Verify a commit was created on `agtsessions/agent-001`
+1. From project root, run autocommit for the session:
+   `agt autocommit -C sessions/agent-001 --session-id agent-001`
+2. Verify a shadow commit was created on `agtsessions/agent-001`
 3. Verify the commit has the configured agent email as author
-4. Verify all modified files are in the commit (including any that would be .gitignore'd)
+4. Verify shadow tree contains:
+   - `sandbox/` - agent's code files
+   - `xdg/` - tool state (may be empty)
+   - `config/` - tool config (may be empty)
 
-Success: Autocommit creates commit with all modified files
+Success: Autocommit creates shadow commit with session folder contents
 
 ### Scenario 2.5: Interleaved User Commits
 
 While agent works, user makes commits on main.
 
 Steps:
-1. In main worktree (not session), make changes and commit
+1. In main worktree (`main/`), make changes and commit
 2. Run another autocommit for the agent session
-3. Verify the agent commit has TWO parents:
-   - Parent 1: previous agent commit
+3. Verify the shadow commit has TWO parents:
+   - Parent 1: previous shadow commit
    - Parent 2: current user branch HEAD
 
-Success: Dual-parent commit structure works
+Success: Dual-parent shadow commit structure works
 
 ### Scenario 2.6: Multiple Autocommits
 
@@ -107,46 +122,65 @@ Steps:
 1. Agent makes changes, autocommit
 2. Agent makes more changes, autocommit
 3. Agent makes more changes, autocommit
-4. Verify linear history on agent branch
+4. Verify linear history on shadow branch
 5. Verify each commit only contains files changed since last autocommit
 
 Success: Timestamp-based scanning only captures new changes
 
-### Scenario 2.7: Merge Agent Work
+### Scenario 2.7: Export Session Work
 
-Bring agent work back to main branch.
+Push user branch to remote.
 
 Steps:
-1. From main worktree, merge the agent branch
-2. Verify the agent's changes appear on main
-3. Verify merge commit is created
+1. In sandbox, create a feature branch and make commits
+2. Run `agt session export --session-id agent-001`
+3. Verify:
+   - User branch is pushed to origin
+   - Shadow branch is NOT on remote
+   - Command fails if sandbox has uncommitted changes
 
-Success: Standard git merge works with agent branches
+Success: Export pushes only user branches, never shadow branches
 
 ### Scenario 2.8: Session Cleanup
 
 Remove the session after work is done.
 
 Steps:
-1. Run appropriate cleanup/prune command
-2. Verify worktree is removed
-3. Verify branch can optionally be kept or deleted
+1. Run `agt session remove --id agent-001`
+2. Verify session folder is removed
+3. Shadow branch is preserved (not deleted)
+4. Run `agt session remove --id agent-002 --delete-branch`
+5. Verify shadow branch is also deleted
 
 Success: Session cleanup works per docs
+
+### Scenario 2.9: List Sessions
+
+Verify session listing works.
+
+Steps:
+1. Create multiple sessions
+2. Run `agt session list`
+3. Verify output shows:
+   - Session ID
+   - Shadow branch name
+   - Sandbox path
+
+Success: Session listing shows expected information
 
 ## Success Criteria
 
 Complete lifecycle works:
-init → fork → work → autocommit → user commits → more autocommit → merge → cleanup
+clone → session new → work → autocommit → user commits → more autocommit → export → remove
 
 ## Failure Modes
 
-- `agt init` doesn't create expected structure
-- `agt fork` fails to create worktree
+- `agt clone` doesn't create expected structure
+- `agt session new` fails to create session folder/sandbox
 - Autocommit doesn't find modified files
 - Autocommit creates wrong parent structure
 - Timestamp not updated after autocommit
-- Merge conflicts unexpectedly
+- Export pushes shadow branches
 - Cleanup fails
 
 ## Notes

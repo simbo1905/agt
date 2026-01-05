@@ -1,10 +1,17 @@
 use crate::config::AgtConfig;
 use anyhow::Result;
 use gix::Repository;
+use serde::Deserialize;
 use std::fs;
-use std::path::Path;
 
-pub fn run(repo: &Repository, config: &AgtConfig) -> Result<()> {
+#[derive(Debug, Deserialize)]
+struct SessionMetadata {
+    session_id: String,
+    branch: String,
+    sandbox: String,
+}
+
+pub fn run(repo: &Repository, _config: &AgtConfig) -> Result<()> {
     let sessions_dir = repo.common_dir().join("agt/sessions");
 
     if !sessions_dir.exists() {
@@ -16,19 +23,17 @@ pub fn run(repo: &Repository, config: &AgtConfig) -> Result<()> {
 
     for entry in fs::read_dir(&sessions_dir)? {
         let entry = entry?;
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        if !file_name.ends_with(".json") {
+        if entry.path().extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        let session_id = file_name.trim_end_matches(".json").to_string();
 
-        let branch_name = format!("{}{}", config.branch_prefix, session_id);
-        let worktree_path = repo.work_dir().map_or_else(
-            || Path::new("<unknown>").to_path_buf(),
-            |wd| wd.join("sessions").join(&session_id),
-        );
+        let raw = fs::read_to_string(entry.path())?;
+        let meta: SessionMetadata = match serde_json::from_str(&raw) {
+            Ok(meta) => meta,
+            Err(_) => continue,
+        };
 
-        sessions.push((session_id, branch_name, worktree_path));
+        sessions.push(meta);
     }
 
     if sessions.is_empty() {
@@ -37,10 +42,10 @@ pub fn run(repo: &Repository, config: &AgtConfig) -> Result<()> {
     }
 
     println!("Agent Sessions:");
-    for (session_id, branch_name, worktree_path) in sessions {
-        println!("  {session_id}:");
-        println!("    Branch: {branch_name}");
-        println!("    Worktree: {}", worktree_path.display());
+    for meta in sessions {
+        println!("  {}:", meta.session_id);
+        println!("    Branch: {}", meta.branch);
+        println!("    Sandbox: {}", meta.sandbox);
     }
 
     Ok(())

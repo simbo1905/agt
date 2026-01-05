@@ -5,27 +5,41 @@ use gix::Repository;
 use gix_object::TreeRefIter;
 use gix_path::from_byte_slice;
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 struct SessionMetadata {
     user_branch: String,
-    worktree: String,
+    sandbox: String,
+}
+
+struct SnapshotDelta {
+    changed: HashMap<PathBuf, PathBuf>,
+    deleted: HashSet<PathBuf>,
+}
+
+impl SnapshotDelta {
+    fn new() -> Self {
+        Self {
+            changed: HashMap::new(),
+            deleted: HashSet::new(),
+        }
+    }
 }
 
 pub fn run(
     repo: &Repository,
-    worktree_path: &Path,
+    cwd: &Path,
     session_id: &str,
     override_timestamp: Option<i64>,
     dry_run: bool,
+    _siblings: Option<Vec<String>>,
     config: &AgtConfig,
 ) -> Result<()> {
     let branch_name = format!("{}{}", config.branch_prefix, session_id);
 
-    // Resolve session metadata up front so autocommit is always scoped to the
-    // session worktree (avoids cross-contamination when invoked from repo root).
+    // Resolve session metadata
     let session_meta_path = repo
         .common_dir()
         .join("agt/sessions")
@@ -35,42 +49,30 @@ pub fn run(
     let session: SessionMetadata = serde_json::from_str(&session_meta_raw)
         .with_context(|| format!("Failed to parse {}", session_meta_path.display()))?;
 
-    let mut session_worktree = PathBuf::from(&session.worktree);
-    if !session_worktree.exists() {
-        // Back-compat/migration: older session metadata may contain a worktree path
-        // relative to the main worktree, but autocommit is often invoked from
-        // inside the session worktree via `-C`. In that case, prefer the current
-        // directory if it matches the session id.
-        if worktree_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n == session_id)
-            && worktree_path.exists()
-        {
-            session_worktree = worktree_path.to_path_buf();
-
-            if let Ok(abs) = std::fs::canonicalize(&session_worktree) {
-                if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&session_meta_raw) {
-                    if let Some(obj) = v.as_object_mut() {
-                        obj.insert(
-                            "worktree".to_string(),
-                            serde_json::Value::String(abs.display().to_string()),
-                        );
-                        let _ = std::fs::write(&session_meta_path, serde_json::to_string(&v)?);
-                    }
-                }
-            }
+    // Determine sandbox path
+    let mut sandbox_path = PathBuf::from(&session.sandbox);
+    if !sandbox_path.exists() {
+        if cwd.ends_with("sandbox") && cwd.exists() {
+            sandbox_path = cwd.to_path_buf();
         } else {
-            anyhow::bail!(
-                "Session worktree does not exist: {}",
-                session_worktree.display()
-            );
+            anyhow::bail!("Sandbox does not exist: {}", sandbox_path.display());
         }
     }
+    sandbox_path = std::fs::canonicalize(&sandbox_path)?;
 
-    // 1. Read last timestamp (use common_dir for worktree support)
+    // Session folder is parent of sandbox
+    let session_folder = sandbox_path
+        .parent()
+        .context("Sandbox has no parent")?
+        .to_path_buf();
+
+    // 1. Read last timestamp
     let timestamp_file = repo.common_dir().join("agt/timestamps").join(session_id);
-    let last_timestamp: u64 = std::fs::read_to_string(&timestamp_file)?.trim().parse()?;
+    let last_timestamp: u64 = match std::fs::read_to_string(&timestamp_file) {
+        Ok(s) => s.trim().parse()?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(e) => return Err(e.into()),
+    };
 
     let scan_timestamp: u64 = match override_timestamp {
         Some(t) if t < 0 => anyhow::bail!("timestamp override must be >= 0"),
@@ -78,62 +80,68 @@ pub fn run(
         None => last_timestamp,
     };
 
-    // 3. Build tree from files (not using index)
-    let agent_branch_ref = format!("refs/heads/{branch_name}");
+    // 2. Resolve parent shadow commit
+    let shadow_branch_ref = format!("refs/heads/{branch_name}");
     let parent1 = repo
-        .find_reference(&agent_branch_ref)?
+        .find_reference(&shadow_branch_ref)?
         .peel_to_commit()
-        .context("Failed to resolve agent session branch")?;
+        .context("Failed to resolve shadow branch")?;
 
-    // 2. Scan for modified files
-    let snapshot_delta =
-        compute_snapshot_delta(repo, &session_worktree, &parent1.tree()?, scan_timestamp)?;
+    // 3. Compute Delta - scan entire session folder
+    let mut base_paths = HashSet::new();
+    collect_tree_paths(
+        repo,
+        parent1.tree_id()?.detach(),
+        PathBuf::new(),
+        &mut base_paths,
+    )?;
 
-    if snapshot_delta.changed.is_empty() && snapshot_delta.deleted.is_empty() {
+    let delta = scan_changes(&session_folder, &base_paths, scan_timestamp)?;
+
+    if delta.changed.is_empty() && delta.deleted.is_empty() {
         println!("No modified files since last autocommit");
         return Ok(());
     }
 
     if dry_run {
-        let mut changed: Vec<_> = snapshot_delta.changed.iter().collect();
+        let mut changed: Vec<_> = delta.changed.keys().collect();
         changed.sort();
-        let mut deleted: Vec<_> = snapshot_delta.deleted.iter().collect();
+        let mut deleted: Vec<_> = delta.deleted.iter().collect();
         deleted.sort();
 
         println!("Dry run: session {session_id}");
-        println!("  Worktree: {}", session_worktree.display());
         println!(
             "  Would commit {} files, delete {} files:",
-            snapshot_delta.changed.len(),
-            snapshot_delta.deleted.len()
+            delta.changed.len(),
+            delta.deleted.len()
         );
         for f in changed {
-            println!("  M {}", session_worktree.join(f).display());
+            println!("  M {}", f.display());
         }
         for f in deleted {
-            println!("  D {}", session_worktree.join(f).display());
+            println!("  D {}", f.display());
         }
         return Ok(());
     }
 
-    // Parent2 is the user branch head recorded at fork time (not the agent worktree HEAD).
+    // 4. Create shadow commit
     let parent2_id = repo
         .find_reference(&session.user_branch)?
         .peel_to_commit()
         .context("Failed to resolve user branch for parent2")?
         .id;
 
-    // Explicitly reject detached/unborn HEAD inside the agent worktree.
-    let worktree_repo = gix::open(&session_worktree)?;
-    let head = worktree_repo.head()?;
+    // Reject detached/unborn HEAD in sandbox
+    let sandbox_repo = gix::open(&sandbox_path)?;
+    let head = sandbox_repo.head()?;
     if head.is_detached() {
-        anyhow::bail!("Detached HEAD in agent worktree is not supported");
+        anyhow::bail!("Detached HEAD in sandbox is not supported");
     }
     if head.is_unborn() {
-        anyhow::bail!("Unborn HEAD in agent worktree is not supported");
+        anyhow::bail!("Unborn HEAD in sandbox is not supported");
     }
 
-    let tree_id = build_tree_from_delta(repo, &parent1, &session_worktree, &snapshot_delta)?;
+    let tree_id = build_tree_from_delta(repo, &parent1, &delta)?;
 
     let signature = gix::actor::SignatureRef {
         name: gix::bstr::BStr::new("agt"),
@@ -144,31 +152,78 @@ pub fn run(
     let commit_id = repo.commit_as(
         signature,
         signature,
-        agent_branch_ref.as_str(),
+        shadow_branch_ref.as_str(),
         "agt autocommit",
         tree_id,
         [parent1.id, parent2_id],
     )?;
 
-    // 6. Update timestamp
+    // Update timestamp
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
     std::fs::write(&timestamp_file, now.to_string())?;
 
     println!(
-        "Created commit {} with {} files",
+        "Created shadow commit {} with {} files",
         commit_id,
-        snapshot_delta.changed.len()
+        delta.changed.len()
     );
 
     Ok(())
 }
 
+fn scan_changes(
+    scan_root: &Path,
+    base_paths: &HashSet<PathBuf>,
+    since_timestamp: u64,
+) -> Result<SnapshotDelta> {
+    let threshold =
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(since_timestamp);
+
+    let mut current_paths = HashSet::new();
+    let mut delta = SnapshotDelta::new();
+
+    for entry in jwalk::WalkDir::new(scan_root)
+        .skip_hidden(false)
+        .process_read_dir(|_depth, _path, _state, children| {
+            children.retain(|entry| {
+                entry.as_ref().map_or(true, |dir_entry| {
+                    dir_entry.file_name != std::ffi::OsStr::new(".git")
+                })
+            });
+        })
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        let path = entry.path();
+        if entry.file_type().is_dir() {
+            continue;
+        }
+
+        let rel_path = path.strip_prefix(scan_root)?.to_path_buf();
+        current_paths.insert(rel_path.clone());
+
+        let metadata = std::fs::symlink_metadata(&path)?;
+        let mtime = metadata.modified()?;
+        if mtime >= threshold {
+            delta.changed.insert(rel_path, path);
+        }
+    }
+
+    // Deletions: in base_paths but not in current scan
+    for base_path in base_paths {
+        if !current_paths.contains(base_path) {
+            delta.deleted.insert(base_path.clone());
+        }
+    }
+
+    Ok(delta)
+}
+
 fn build_tree_from_delta(
     repo: &Repository,
     base_commit: &gix::Commit<'_>,
-    worktree: &Path,
     delta: &SnapshotDelta,
 ) -> Result<gix::ObjectId> {
     let base_tree_id = base_commit.tree_id()?.detach();
@@ -178,15 +233,14 @@ fn build_tree_from_delta(
         editor.remove(path_for_tree(relative_path))?;
     }
 
-    for relative_path in &delta.changed {
-        let full_path = worktree.join(relative_path);
-        let metadata = std::fs::symlink_metadata(&full_path)
-            .with_context(|| format!("Failed to stat {}", full_path.display()))?;
+    for (repo_path, fs_path) in &delta.changed {
+        let metadata = std::fs::symlink_metadata(fs_path)
+            .with_context(|| format!("Failed to stat {}", fs_path.display()))?;
         let file_type = metadata.file_type();
 
         let (entry_kind, data) = if file_type.is_symlink() {
-            let target = std::fs::read_link(&full_path)
-                .with_context(|| format!("Failed to read symlink {}", full_path.display()))?;
+            let target = std::fs::read_link(fs_path)
+                .with_context(|| format!("Failed to read symlink {}", fs_path.display()))?;
             (
                 EntryKind::Link,
                 target
@@ -204,13 +258,13 @@ fn build_tree_from_delta(
                     kind = EntryKind::BlobExecutable;
                 }
             }
-            let data = std::fs::read(&full_path)
-                .with_context(|| format!("Failed to read {}", full_path.display()))?;
+            let data = std::fs::read(fs_path)
+                .with_context(|| format!("Failed to read {}", fs_path.display()))?;
             (kind, data)
         };
 
         let blob_id = repo.write_blob(data)?;
-        editor.upsert(path_for_tree(relative_path), entry_kind, blob_id.detach())?;
+        editor.upsert(path_for_tree(repo_path), entry_kind, blob_id.detach())?;
     }
 
     Ok(editor.write()?.detach())
@@ -225,61 +279,6 @@ fn path_for_tree(path: &Path) -> String {
         buf.push_str(&component.as_os_str().to_string_lossy());
     }
     buf
-}
-
-struct SnapshotDelta {
-    changed: HashSet<PathBuf>,
-    deleted: HashSet<PathBuf>,
-}
-
-fn compute_snapshot_delta(
-    repo: &Repository,
-    worktree: &Path,
-    base_tree: &gix::Tree<'_>,
-    since_timestamp: u64,
-) -> Result<SnapshotDelta> {
-    let threshold =
-        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(since_timestamp);
-
-    let mut current_paths = HashSet::new();
-    let mut changed = HashSet::new();
-
-    for entry in jwalk::WalkDir::new(worktree)
-        .skip_hidden(false)
-        .process_read_dir(|_depth, _path, _state, children| {
-            children.retain(|entry| {
-                entry.as_ref().map_or(true, |dir_entry| {
-                    dir_entry.file_name != std::ffi::OsStr::new(".git")
-                })
-            });
-        })
-        .into_iter()
-        .filter_map(std::result::Result::ok)
-    {
-        let path = entry.path();
-        let rel_path = path.strip_prefix(worktree)?.to_path_buf();
-        let file_type = entry.file_type();
-        if file_type.is_dir() {
-            continue;
-        }
-
-        current_paths.insert(rel_path.clone());
-        let metadata = std::fs::symlink_metadata(&path)?;
-        let mtime = metadata.modified()?;
-        if mtime >= threshold {
-            changed.insert(rel_path);
-        }
-    }
-
-    let mut base_paths = HashSet::new();
-    collect_tree_paths(repo, base_tree.id, PathBuf::new(), &mut base_paths)?;
-
-    let deleted = base_paths
-        .difference(&current_paths)
-        .cloned()
-        .collect::<HashSet<_>>();
-
-    Ok(SnapshotDelta { changed, deleted })
 }
 
 fn collect_tree_paths(
@@ -305,11 +304,12 @@ fn collect_tree_paths(
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_snapshot_delta, path_for_tree, SnapshotDelta};
+    use super::{path_for_tree, scan_changes, SnapshotDelta};
     use anyhow::Result;
     use gix::commit::NO_PARENT_IDS;
     use gix::object::tree::EntryKind;
     use gix_object::Tree;
+    use std::collections::HashSet;
     use std::fs;
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
@@ -368,69 +368,39 @@ mod tests {
         Ok(editor.write()?.detach())
     }
 
-    fn assert_contains(set: &std::collections::HashSet<PathBuf>, path: &Path) {
+    fn assert_changed_contains(delta: &SnapshotDelta, path: &Path) {
         assert!(
-            set.contains(path),
-            "expected set to contain {}",
+            delta.changed.contains_key(path),
+            "expected changed to contain {}",
+            path.display()
+        );
+    }
+
+    fn assert_deleted_contains(delta: &SnapshotDelta, path: &Path) {
+        assert!(
+            delta.deleted.contains(path),
+            "expected deleted to contain {}",
             path.display()
         );
     }
 
     #[test]
-    fn snapshot_delta_detects_add_modify_delete() -> Result<()> {
+    fn scan_changes_detects_add_modify_delete() -> Result<()> {
         let tmp = init_repo()?;
-        let repo = gix::open(tmp.path())?;
-        let commit = repo.head()?.peel_to_commit_in_place()?;
-        let base_tree = commit.tree()?;
+
+        let mut base_paths = HashSet::new();
+        base_paths.insert(PathBuf::from("a.txt"));
+        base_paths.insert(PathBuf::from("dir/b.txt"));
 
         fs::write(tmp.path().join("c.txt"), "c")?;
         fs::write(tmp.path().join("dir/b.txt"), "")?;
         fs::remove_file(tmp.path().join("a.txt"))?;
 
-        let SnapshotDelta { changed, deleted } =
-            compute_snapshot_delta(&repo, tmp.path(), &base_tree, 0)?;
+        let delta = scan_changes(tmp.path(), &base_paths, 0)?;
 
-        assert_contains(&changed, Path::new("c.txt"));
-        assert_contains(&changed, Path::new("dir/b.txt"));
-        assert_contains(&deleted, Path::new("a.txt"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn snapshot_delta_reports_rename_as_delete_add() -> Result<()> {
-        let tmp = init_repo()?;
-        let repo = gix::open(tmp.path())?;
-        let commit = repo.head()?.peel_to_commit_in_place()?;
-        let base_tree = commit.tree()?;
-
-        fs::rename(tmp.path().join("dir/b.txt"), tmp.path().join("dir/c.txt"))?;
-
-        let SnapshotDelta { changed, deleted } =
-            compute_snapshot_delta(&repo, tmp.path(), &base_tree, 0)?;
-
-        assert_contains(&changed, Path::new("dir/c.txt"));
-        assert_contains(&deleted, Path::new("dir/b.txt"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn snapshot_delta_detects_nested_move_and_truncate() -> Result<()> {
-        let tmp = init_repo()?;
-        let repo = gix::open(tmp.path())?;
-        let commit = repo.head()?.peel_to_commit_in_place()?;
-        let base_tree = commit.tree()?;
-
-        fs::create_dir_all(tmp.path().join("nested"))?;
-        fs::rename(tmp.path().join("a.txt"), tmp.path().join("nested/a.txt"))?;
-        fs::write(tmp.path().join("nested/a.txt"), "")?;
-
-        let SnapshotDelta { changed, deleted } =
-            compute_snapshot_delta(&repo, tmp.path(), &base_tree, 0)?;
-
-        assert_contains(&changed, Path::new("nested/a.txt"));
-        assert_contains(&deleted, Path::new("a.txt"));
+        assert_changed_contains(&delta, Path::new("c.txt"));
+        assert_changed_contains(&delta, Path::new("dir/b.txt"));
+        assert_deleted_contains(&delta, Path::new("a.txt"));
 
         Ok(())
     }

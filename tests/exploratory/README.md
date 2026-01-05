@@ -34,7 +34,7 @@ These test suites are designed to be executed by AI coding agents. Each suite ru
 ## Architecture Note
 
 When invoked as `git` (via symlink), agt spawns the real git binary and filters its stdout
-to hide agent branches, tags, and commits. This provides full git compatibility while keeping
+to hide shadow branches, tags, and commits. This provides full git compatibility while keeping
 agent implementation details hidden from users.
 
 The path to the real git binary is configured via `agt.gitPath` in `~/.agtconfig` or can be

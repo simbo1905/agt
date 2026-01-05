@@ -85,8 +85,8 @@ fn find_repo_root() -> Option<PathBuf> {
 }
 
 fn parse_ini_file(path: &PathBuf) -> Result<HashMap<String, String>> {
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
     parse_ini(&content)
 }
 
@@ -152,9 +152,18 @@ mod tests {
     branchPrefix = agtsessions/
 "#;
         let settings = parse_ini(content).unwrap();
-        assert_eq!(settings.get("agt.gitPath"), Some(&"/opt/git/bin/git".to_string()));
-        assert_eq!(settings.get("agt.agentEmail"), Some(&"agt.opencode@local".to_string()));
-        assert_eq!(settings.get("agt.branchPrefix"), Some(&"agtsessions/".to_string()));
+        assert_eq!(
+            settings.get("agt.gitPath"),
+            Some(&"/opt/git/bin/git".to_string())
+        );
+        assert_eq!(
+            settings.get("agt.agentEmail"),
+            Some(&"agt.opencode@local".to_string())
+        );
+        assert_eq!(
+            settings.get("agt.branchPrefix"),
+            Some(&"agtsessions/".to_string())
+        );
     }
 
     #[test]
@@ -166,7 +175,10 @@ mod tests {
     gitPath = /usr/bin/git
 "#;
         let settings = parse_ini(content).unwrap();
-        assert_eq!(settings.get("agt.gitPath"), Some(&"/usr/bin/git".to_string()));
+        assert_eq!(
+            settings.get("agt.gitPath"),
+            Some(&"/usr/bin/git".to_string())
+        );
     }
 
     #[test]

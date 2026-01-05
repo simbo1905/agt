@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use gix::object::tree::EntryKind;
-use gix::{bstr::ByteSlice, bstr::BStr, bstr::BString, Repository};
+use gix::{bstr::BStr, bstr::BString, bstr::ByteSlice, Repository};
 use gix_index::entry::{Flags, Mode, Stage, Stat};
 use gix_index::File as IndexFile;
 use gix_path::from_byte_slice;
@@ -27,11 +27,7 @@ fn git_add(args: &[String], repo: &Repository) -> Result<()> {
         .work_dir()
         .context("No working directory found for git add")?;
 
-    let AddArgs {
-        all,
-        update,
-        paths,
-    } = parse_add_args(args)?;
+    let AddArgs { all, update, paths } = parse_add_args(args)?;
 
     let mut index = repo
         .index_or_load_from_head_or_empty()
@@ -85,14 +81,7 @@ fn git_commit(args: &[String], repo: &Repository) -> Result<()> {
         email: BStr::new(email.as_bytes()),
         time: gix::date::Time::now_local_or_utc(),
     };
-    let commit_id = repo.commit_as(
-        signature,
-        signature,
-        ref_name,
-        &message,
-        tree_id,
-        parents,
-    )?;
+    let commit_id = repo.commit_as(signature, signature, ref_name, &message, tree_id, parents)?;
 
     println!("Created commit {commit_id}");
     Ok(())
@@ -221,7 +210,9 @@ fn stage_paths(
     paths: &[PathBuf],
 ) -> Result<()> {
     let cwd = std::env::current_dir()?;
-    let work_dir_canon = work_dir.canonicalize().unwrap_or_else(|_| work_dir.to_path_buf());
+    let work_dir_canon = work_dir
+        .canonicalize()
+        .unwrap_or_else(|_| work_dir.to_path_buf());
     let mut seen = HashSet::new();
 
     for path in paths {
@@ -284,7 +275,14 @@ fn stage_one(
     let meta = gix_index::fs::Metadata::from_path_no_follow(&full_path)?;
     let (mode, data) = if meta.is_symlink() {
         let target = std::fs::read_link(&full_path)?;
-        (Mode::SYMLINK, target.as_os_str().to_string_lossy().into_owned().into_bytes())
+        (
+            Mode::SYMLINK,
+            target
+                .as_os_str()
+                .to_string_lossy()
+                .into_owned()
+                .into_bytes(),
+        )
     } else {
         let kind = if meta.is_executable() {
             Mode::FILE_EXECUTABLE
@@ -324,33 +322,33 @@ fn walk_path(root: &Path, work_dir: &Path, repo: &Repository) -> Result<Vec<Path
     // Use gix's dirwalk to respect .gitignore
     let index = repo.index_or_load_from_head_or_empty()?;
     let should_interrupt = AtomicBool::new(false);
-    
-    let options = repo.dirwalk_options()?
-        .emit_tracked(false)  // We want untracked files only
+
+    let options = repo
+        .dirwalk_options()?
+        .emit_tracked(false) // We want untracked files only
         .emit_untracked(gix::dir::walk::EmissionMode::Matching)
-        .emit_ignored(None)  // Don't emit ignored files
+        .emit_ignored(None) // Don't emit ignored files
         .emit_pruned(false)
         .emit_empty_directories(false);
-    
+
     let mut collector = gix::dir::walk::delegate::Collect::default();
-    
+
     // Compute patterns to limit walk to the specified root
     let patterns: Vec<BString> = if root == work_dir {
         vec![]
     } else {
-        let rel = root.strip_prefix(work_dir)
-            .with_context(|| format!("Root {} is not within work_dir {}", root.display(), work_dir.display()))?;
+        let rel = root.strip_prefix(work_dir).with_context(|| {
+            format!(
+                "Root {} is not within work_dir {}",
+                root.display(),
+                work_dir.display()
+            )
+        })?;
         vec![path_to_bstring(rel)]
     };
-    
-    repo.dirwalk(
-        &index,
-        patterns,
-        &should_interrupt,
-        options,
-        &mut collector,
-    )?;
-    
+
+    repo.dirwalk(&index, patterns, &should_interrupt, options, &mut collector)?;
+
     let mut paths = Vec::new();
     for (entry, _dir_status) in collector.into_entries_by_path() {
         // Only include files that are untracked
@@ -359,7 +357,7 @@ fn walk_path(root: &Path, work_dir: &Path, repo: &Repository) -> Result<Vec<Path
             paths.push(path);
         }
     }
-    
+
     Ok(paths)
 }
 

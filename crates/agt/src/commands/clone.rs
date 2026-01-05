@@ -9,10 +9,14 @@ pub fn run(remote_url: &str, target_path: Option<&Path>, config: &AgtConfig) -> 
     // 1. Determine paths
     let repo_name = extract_repo_name(remote_url)?;
     let base = target_path.unwrap_or(Path::new("."));
+    let repo_root = base.join(&repo_name);
     let bare_path = base.join(format!("{repo_name}.git"));
-    let work_path = base.join(&repo_name);
+    let main_path = repo_root.join("main");
 
-    // 2. Clone as bare
+    std::fs::create_dir_all(&repo_root)?;
+    std::fs::create_dir_all(&bare_path)?;
+
+    // 2. Clone as bare into .bare/
     let (checkout, _outcome) = gix::clone::PrepareFetch::new(
         remote_url,
         &bare_path,
@@ -24,42 +28,40 @@ pub fn run(remote_url: &str, target_path: Option<&Path>, config: &AgtConfig) -> 
         gix::progress::Discard,
         &std::sync::atomic::AtomicBool::new(false),
     )?;
-    // Persist the repo so it's not deleted on drop
     checkout.persist();
 
-    // 3. Create main worktree as a proper linked worktree
-    // This keeps the repo bare while having a working main worktree
-    std::fs::create_dir_all(&work_path)?;
-    setup_main_worktree(&bare_path, &work_path, &repo_name)?;
+    // 3. Create main worktree linked to bare repo
+    std::fs::create_dir_all(&main_path)?;
+    setup_main_worktree(&bare_path, &main_path, "main")?;
 
-    // 4. Create .agt directory in worktree and write config
-    let agt_dir = work_path.join(".agt");
+    // 4. Create sessions/ folder (empty)
+    std::fs::create_dir_all(repo_root.join("sessions"))?;
+
+    // 5. Create .agt directory in main worktree with config
+    let agt_dir = main_path.join(".agt");
     std::fs::create_dir_all(&agt_dir)?;
     write_agt_config(&agt_dir, config)?;
 
-    // 5. Create agt state directory (in bare repo for session management)
+    // 7. Create agt state directory inside .bare
     let agt_state_dir = bare_path.join("agt");
     std::fs::create_dir_all(agt_state_dir.join("timestamps"))?;
     std::fs::create_dir_all(agt_state_dir.join("sessions"))?;
 
-    println!("Initialized agt repository: {repo_name}");
+    println!("Cloned agt repository: {repo_name}");
     println!("  Bare repo: {}", bare_path.display());
-    println!("  Worktree: {}", work_path.display());
+    println!("  Main worktree: {}", main_path.display());
 
     Ok(())
 }
 
-/// Set up the main worktree as a proper linked worktree.
-/// This creates the worktree admin directory under <bare>.git/worktrees/<name>/
-/// and the .git file in the worktree, then checks out HEAD.
 fn setup_main_worktree(bare_path: &Path, work_path: &Path, name: &str) -> Result<()> {
     let repo = gix::open(bare_path).context("Failed to open bare repository")?;
 
-    // Create admin directory: <bare>.git/worktrees/<name>/
+    // Create admin directory: .bare/worktrees/<name>
     let admin_dir = bare_path.join("worktrees").join(name);
     std::fs::create_dir_all(&admin_dir)?;
 
-    // Resolve HEAD to get the branch and commit
+    // Resolve HEAD to get branch
     let head = repo.head()?;
     let branch_ref = if head.is_unborn() {
         "refs/heads/main".to_string()
@@ -69,48 +71,35 @@ fn setup_main_worktree(bare_path: &Path, work_path: &Path, name: &str) -> Result
             .unwrap_or_else(|| "refs/heads/main".to_string())
     };
 
-    // Write worktree metadata files
-    // 1. Create .git file in worktree pointing to admin dir
-    let worktree_git = work_path.join(".git");
+    // Write worktree metadata
     let admin_dir_abs = std::fs::canonicalize(&admin_dir)?;
+    let worktree_git = work_path.join(".git");
     std::fs::write(
         &worktree_git,
         format!("gitdir: {}\n", admin_dir_abs.display()),
     )?;
 
-    // 2. Write gitdir file in admin dir pointing back to worktree's .git
     let worktree_git_abs = std::fs::canonicalize(&worktree_git)?;
     std::fs::write(
         admin_dir.join("gitdir"),
         format!("{}\n", worktree_git_abs.display()),
     )?;
-
-    // 3. Write commondir (relative path to the main git dir)
     std::fs::write(admin_dir.join("commondir"), "../..\n")?;
-
-    // 4. Write HEAD
     std::fs::write(admin_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
 
-    // 5. Checkout files if HEAD points to a valid commit
     if !head.is_unborn() {
         let commit = head
             .into_peeled_id()
             .context("Failed to resolve HEAD")?
             .object()?
             .peel_to_commit()?;
-        let tree_id = commit.tree_id()?.detach();
-
-        // Write ORIG_HEAD
         std::fs::write(admin_dir.join("ORIG_HEAD"), format!("{}\n", commit.id))?;
-
-        // Build index and checkout
-        checkout_to_worktree(&repo, work_path, &admin_dir, tree_id)?;
+        checkout_to_worktree(&repo, work_path, &admin_dir, commit.tree_id()?.detach())?;
     }
 
     Ok(())
 }
 
-/// Checkout a tree to a worktree directory
 fn checkout_to_worktree(
     repo: &gix::Repository,
     worktree: &Path,
@@ -146,7 +135,6 @@ fn checkout_to_worktree(
     Ok(())
 }
 
-/// Write agt configuration to .agt/config in the worktree.
 fn write_agt_config(agt_dir: &Path, config: &AgtConfig) -> Result<()> {
     let config_path = agt_dir.join("config");
 
@@ -165,7 +153,6 @@ fn write_agt_config(agt_dir: &Path, config: &AgtConfig) -> Result<()> {
 }
 
 fn extract_repo_name(url: &str) -> Result<String> {
-    // Simple extraction - remove .git suffix and get last path component
     let mut name = url
         .trim_end_matches(".git")
         .split('/')
@@ -173,7 +160,6 @@ fn extract_repo_name(url: &str) -> Result<String> {
         .context("Failed to extract repository name from URL")?
         .to_string();
 
-    // Remove any trailing slashes or invalid characters
     name = name.trim_end_matches('/').to_string();
 
     if name.is_empty() {

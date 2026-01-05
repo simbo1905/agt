@@ -2,7 +2,7 @@ DIST = dist
 
 .PHONY: build build-agt build-worktree clean dist test
 
-build: build-worktree build-agt dist
+build: test build-worktree build-agt dist
 
 build-agt:
 	cargo build --release -p agt

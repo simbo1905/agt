@@ -75,78 +75,151 @@ CONFIGURATION
 COMMANDS
    AGT-SPECIFIC COMMANDS (agt mode only)
 
-       agt init <remote-url> [--path <directory>]
-              Initialize a new agt-managed repository. This command:
+       agt clone <remote-url> [--path <directory>]
+              Clone a remote repository into an agt-managed structure. This command:
 
-              1. Clones <remote-url> as a bare repository (<name>.git)
-              2. Creates an adjacent main checkout directory (<name>)
-              3. Configures the worktree to use the bare repo
-              4. Sets up default agt configuration in .agt/config
-              5. Creates the agt state directory (<common-git-dir>/agt/)
+              1. Parses the git URL to extract org/repo
+              2. Creates directory structure: <name>/
+              3. Clones <remote-url> as a bare repository into <name>/.bare/
+              4. Creates .git file pointing to .bare
+              5. Creates main worktree: <name>/main/
+              6. Initializes AGT metadata in .bare/agt/
+
+              Result:
+                  <name>/
+                  ├── .bare/          # Bare repository (git database)
+                  ├── .git            # Text file: "gitdir: .bare"
+                  ├── main/           # Primary worktree (main branch)
+                  │   └── .git        # Text file: "gitdir: ../.bare/worktrees/main"
+                  └── sessions/       # Session folders created here
 
               Options:
                   --path <directory>    Target directory (default: current dir)
 
-       agt fork --session-id <id> [-C <path>] [--from <branch|session>]
-              Create a new agent session with its own worktree and branch.
+   SESSION COMMANDS
 
-              1. Creates branch agtsessions/<id> from specified starting point
-              2. Creates worktree at sessions/<id>/
-              3. Initializes timestamp tracking for auto-commits
-              4. Sets up session metadata
+       agt session new [--id <id>] [-C <path>] [--from <ref>]
+              Create a new agent session for a fresh ticket/task.
+
+              1. Generates session ID (or uses provided --id)
+              2. Resolves starting point (HEAD or --from)
+              3. Creates shadow branch agtsessions/<id>
+              4. Creates session folder at sessions/<id>/
+              5. Creates sandbox (git worktree at sessions/<id>/sandbox/)
+              6. Creates sibling folders based on profile (xdg/, config/)
+              7. Initializes timestamp tracking for autocommits
+              8. Records session metadata
+
+              Session folder layout:
+                  sessions/<id>/
+                  ├── sandbox/        # Agent runs here (git worktree)
+                  │   └── .git        # Points to ../../../.bare/worktrees/sandbox
+                  ├── xdg/            # XDG_DATA_HOME (tool state)
+                  ├── config/         # XDG_CONFIG_HOME (tool config)
+                  └── _/              # AGT system folder
 
               Options:
-                  --session-id <id>     Unique identifier for the session (required)
+                  --id <id>             Session identifier (default: generated UUID)
                   -C <path>             Repository path (default: current dir)
-                  --from <ref>          Starting point: branch name, commit, or
-                                        existing session ID (default: HEAD)
+                  --from <ref>          Starting point: branch, commit, or tag
+                                        (default: HEAD)
+                  --profile <name>      Tool profile for folder setup (default: default)
 
-       agt autocommit -C <path> --session-id <id> [--timestamp <epoch>]
-              Auto-commit all modified files to the agent session branch.
+       agt session export [-C <path>] [--session-id <id>]
+              Push the user branch from a session's sandbox to the remote origin.
 
-              This command:
-              1. Reads last autocommit timestamp from .git/agt/timestamps/<id>
-              2. Scans the session worktree for files with mtime >= last timestamp
-              3. Creates a tree object from all modified files (ignores .gitignore)
-              4. Creates a commit on agtsessions/<id> with:
-                 - Parent 1: last commit on agtsessions/<id>
-                 - Parent 2: current HEAD of the user branch recorded at fork time
-              5. Updates the timestamp file
-              Note: The scan does not follow symlinks; symlink cycles are ignored.
-              Note: Detached HEADs in agent worktrees are not supported.
-              Note: Symlinks are stored as symlinks (mode 120000) with their target
-                    path captured as-is; symlinks pointing outside the worktree may
-                    be broken when checked out elsewhere.
+              1. Verifies no uncommitted changes in sandbox (fails if dirty)
+              2. Gets current branch in sandbox
+              3. Pushes branch to origin
+              4. Reports success/failure
+
+              Note: Shadow branches (agtsessions/*) are NEVER pushed to origin.
+              Only user branches are exported.
 
               Options:
-                  -C <path>             Worktree path (required)
-                  --session-id <id>     Session identifier (required)
-                  --timestamp <epoch>   Override scan timestamp (for testing)
-                  --dry-run             Show what would be committed without committing (includes worktree path)
+                  -C <path>             Repository path (default: current dir)
+                  --session-id <id>     Session to export (default: detect from cwd)
 
-       agt list-sessions [-C <path>]
+       agt session remove --id <id> [-C <path>] [--delete-branch]
+              Remove an agent session and clean up its resources.
+
+              1. Removes session folder (sessions/<id>/)
+              2. Removes git worktree
+              3. Deletes shadow branch (agtsessions/<id>) if --delete-branch
+              4. Cleans up session metadata
+
+              Options:
+                  --id <id>             Session to remove (required)
+                  -C <path>             Repository path (default: current dir)
+                  --delete-branch       Also delete the shadow branch
+
+       agt session fork --from <id> [--id <new-id>] [-C <path>]
+              Fork an existing session to create a parallel session.
+
+              This is an advanced command for tools that support session forking
+              (e.g., opencode). It creates a new session based on the current
+              state of an existing session.
+
+              1. Finds existing session <from>
+              2. Creates new session based on current state
+              3. New session gets its own shadow branch
+
+              Options:
+                  --from <id>           Source session ID (required)
+                  --id <new-id>         New session ID (default: generated)
+                  -C <path>             Repository path (default: current dir)
+
+       agt session list [-C <path>]
               List all agent sessions with their status.
 
               Output includes:
               • Session ID
-              • Branch name
-              • Worktree path
+              • Shadow branch name
+              • Sandbox path
               • Last commit timestamp
-              • Number of commits
-
-       agt prune-session --session-id <id> [-C <path>]
-              Remove an agent session's worktree and optionally its branch.
+              • Number of shadow commits
 
               Options:
-                  --session-id <id>     Session to prune (required)
-                  -C <path>             Repository path
-                  --delete-branch       Also delete the session branch
+                  -C <path>             Repository path (default: current dir)
+
+   AUTOCOMMIT COMMAND
+
+       agt autocommit -C <path> --session-id <id> [--timestamp <epoch>]
+              Create a shadow commit capturing the entire session state.
+
+              This command:
+              1. Reads last autocommit timestamp from .bare/agt/timestamps/<id>
+              2. Scans the session folder for files with mtime >= last timestamp
+              3. Builds shadow tree from session folder contents:
+                 - sandbox/ (agent's code work)
+                 - xdg/ (tool state)
+                 - config/ (tool config)
+                 - _/index (git index state)
+              4. Creates shadow commit on agtsessions/<id> with:
+                 - Parent 1: last commit on agtsessions/<id>
+                 - Parent 2: current HEAD of user branch in sandbox
+              5. Updates the timestamp file
+
+              Note: The scan does not follow symlinks; symlink cycles are ignored.
+              Note: Symlinks are stored as symlinks (mode 120000) with their target
+                    path captured as-is.
+
+              Options:
+                  -C <path>             Session folder path (required)
+                  --session-id <id>     Session identifier (required)
+                  --timestamp <epoch>   Override scan timestamp (for testing)
+                  --dry-run             Show what would be committed without committing
+
+   STATUS COMMAND
 
        agt status [-C <path>]
               Show agt-specific status including:
               • Active sessions
               • Pending autocommits
               • Configuration summary
+
+              Options:
+                  -C <path>             Repository path (default: current dir)
 
    GIT COMMANDS (both modes)
 
@@ -196,20 +269,24 @@ FILES
 
        .agt/config
               Local repository agt configuration. Overrides global settings.
+              Located in the project root (sibling to .bare/).
 
-       <common-git-dir>/agt/
-              AGT state directory stored in the repository's common git directory
-              (for bare repos: <repo>.git/agt/). Contains:
+       .bare/agt/
+              AGT state directory stored in the bare repository. Contains:
 
               timestamps/<session-id>
                      Last autocommit timestamp for each session (Unix epoch).
 
               sessions/<session-id>.json
                      Session metadata including user branch, creation time,
-                     starting commit, and worktree path.
+                     starting commit, and sandbox path.
 
        sessions/<session-id>/
-              Default location for agent session worktrees.
+              Session folder containing:
+              - sandbox/ (git worktree where agent runs)
+              - xdg/ (tool state, XDG_DATA_HOME)
+              - config/ (tool config, XDG_CONFIG_HOME)
+              - _/ (AGT system folder)
 
 ENVIRONMENT
        AGT_DISABLE_FILTER
@@ -223,9 +300,9 @@ ENVIRONMENT
               Override agt.gitPath configuration. Path to the real git binary.
 
 EXAMPLES
-       Initialize a new agt-managed repository:
-              $ agt init https://github.com/user/project.git
-              $ cd project
+       Clone a remote repository:
+              $ agt clone https://github.com/user/project.git
+              $ cd project/main
 
        Configure agt settings (in ~/.agtconfig):
               [agt]
@@ -234,77 +311,94 @@ EXAMPLES
                   branchPrefix = agtsessions/
 
        Start a new agent session:
-              $ agt fork --session-id agent-001
+              $ agt session new --id agent-001
 
        Work in the agent session (agent does its work):
-              $ cd sessions/agent-001
+              $ cd sessions/agent-001/sandbox
               $ # ... agent modifies files ...
 
        Auto-commit agent changes:
               $ agt autocommit -C sessions/agent-001 --session-id agent-001
 
-       Fork a new session from an existing one:
-              $ agt fork --session-id agent-002 --from agent-001
+       Export session work to remote:
+              $ agt session export --session-id agent-001
 
-       View all branches (including agent branches):
+       Fork a new session from an existing one (for parallel work):
+              $ agt session fork --from agent-001 --id agent-002
+
+       List all sessions:
+              $ agt session list
+
+       Remove a session:
+              $ agt session remove --id agent-001 --delete-branch
+
+       View all branches (including shadow branches):
               $ agt branch -a
 
        View filtered branches (user branches only):
               $ git branch -a
 
-       Fork a new session from a previous point in history:
-              $ agt fork --session-id agent-rollback --from <commit-sha>
-
        Debug filtering issues:
               $ git --disable-agt branch -a
 
 SANDBOXING ARCHITECTURE
-       agt is designed to work in conjunction with bubblewrap (bwrap) to provide
-       secure isolation for agent sessions.
+       agt is designed to work with chroot jails (via toybox) to provide secure
+       isolation for agent sessions.
 
        The Sandbox Model:
-              1.  Each agent session runs in a dedicated directory (worktree).
-              2.  The session is jailed using 'bwrap', restricting access to the
-                  host filesystem.
+              1.  Each agent session runs in a dedicated sandbox folder.
+              2.  The session is jailed using chroot, restricting filesystem access.
               3.  The 'agt' binary is bind-mounted into the jail as '/usr/bin/git'.
-              4.  The jail contains a symlink or bind-mount of the .git directory
-                  filtered by agt.
+              4.  Profile-specific folders (xdg, config) are bind-mounted to
+                  expected locations (~/.local/share, ~/.config).
 
        Dual-Role Security:
               Inside the jail (invoked as 'git'):
                      The agent sees a "normal" Git environment but is restricted
-                     to user-land branches. It cannot see or modify the immutable
-                     history of other agents or the agent's own checkpoint history.
+                     to user branches. It cannot see shadow branches or other
+                     agent sessions.
 
               Outside the jail (invoked as 'agt'):
-                     The process manager (Agent Spawner) has full visibility. It
-                     executes 'agt autocommit' to capture the full state of the
-                     jail, including ignored files, into the immutable history.
+                     The process manager has full visibility. It executes
+                     'agt autocommit' to capture the full state of the session
+                     into the shadow branch.
 
 ARCHITECTURE
-       Repository Layout:
-              project.git/           # Bare repository (object store)
-              project/               # Main user worktree
-              ├── .git               # File pointing to ../project.git
-              ├── .agt/              # Local agt configuration
-              │   └── config
-              └── sessions/          # Agent worktrees
-                  ├── agent-001/
-                  │   └── .git       # File pointing to ../../project.git
-                  └── agent-002/
-                      └── .git
+       Repository Layout (after agt clone):
+              project/
+              ├── .bare/              # Bare repository (object store)
+              ├── .git                # Text file: "gitdir: .bare"
+              ├── main/               # Main user worktree
+              │   └── .git            # File: "gitdir: ../.bare/worktrees/main"
+              └── sessions/           # Agent session folders
+                  └── agent-001/      # Session folder
+                      ├── sandbox/    # Agent runs here (git worktree)
+                      │   └── .git    # File: "gitdir: ../../../.bare/worktrees/sandbox"
+                      ├── xdg/        # Tool state (XDG_DATA_HOME)
+                      ├── config/     # Tool config (XDG_CONFIG_HOME)
+                      └── _/          # AGT system folder
+                          └── index   # Captured git index
 
-       Commit Graph:
-              User commits and agent commits share the same object store.
-              Agent autocommits have two parents:
-              - First parent: previous agent commit (linear agent history)
+       Shadow Commit Graph:
+              User commits and shadow commits share the same object store.
+              Shadow commits have two parents:
+              - First parent: previous shadow commit (linear shadow history)
               - Second parent: user branch HEAD (linking to user timeline)
 
               This enables:
-              • Full time-travel to any agent state
-              • Forking from any point in agent history
+              • Full time-travel to any session state
+              • Forking from any point in shadow history
               • Rolling back agent changes without affecting user branches
               • Comparing agent work against user branch state
+
+       Shadow Tree Structure:
+              The shadow tree mirrors the session folder exactly:
+              (root)
+              ├── sandbox/        # Agent's code (same as user branch tree)
+              ├── xdg/            # Tool state snapshot
+              ├── config/         # Tool config snapshot
+              └── _/
+                  └── index       # Git index at time of autocommit
 
 EXIT STATUS
        0      Success

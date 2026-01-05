@@ -18,6 +18,31 @@ Verify that the tool behaves EXACTLY as documented in `docs/agt.1.txt`. If there
 
 The documentation IS the specification. This suite systematically walks through every claim in the man page and verifies it.
 
+## Prerequisite: --help Matches Man Page
+
+Before running individual checks, verify that `--help` output matches `docs/agt.1.txt`:
+
+```bash
+# Capture help output for all commands
+agt --help > agt-help.txt
+agt clone --help > agt-clone-help.txt
+agt session --help > agt-session-help.txt
+agt session new --help > agt-session-new-help.txt
+agt session export --help > agt-session-export-help.txt
+agt session remove --help > agt-session-remove-help.txt
+agt session fork --help > agt-session-fork-help.txt
+agt session list --help > agt-session-list-help.txt
+agt autocommit --help > agt-autocommit-help.txt
+agt status --help > agt-status-help.txt
+```
+
+For each command, verify:
+- [ ] All options listed in --help match docs/agt.1.txt
+- [ ] Option descriptions are consistent
+- [ ] Required vs optional arguments match
+
+**FAIL if**: Any --help output describes options not in docs/agt.1.txt, or vice versa.
+
 ## Audit Sections
 
 ### Section: NAME
@@ -27,7 +52,7 @@ The documentation IS the specification. This suite systematically walks through 
 Verify:
 - [ ] Binary is named `agt`
 - [ ] It manages "sessions"
-- [ ] It creates "snapshots" (commits)
+- [ ] It creates "snapshots" (shadow commits)
 
 ### Section: SYNOPSIS
 
@@ -45,19 +70,19 @@ Verify:
 > Branches matching the configured prefix are hidden from output
 
 Verify:
-- [ ] Agent branches hidden in git mode
+- [ ] Shadow branches hidden in git mode
 - [ ] Verify with `git branch` output
 
 > Tags matching the configured prefix are hidden from output
 
 Verify:
-- [ ] Create agent-prefixed tag
+- [ ] Create shadow-prefixed tag
 - [ ] Verify hidden in git mode
 
 > Commits authored by the agent email are hidden from logs
 
 Verify:
-- [ ] Commits by agent email hidden
+- [ ] Shadow commits by agent email hidden
 - [ ] Verify with `git log` output
 
 **agt mode (unfiltered)**
@@ -66,7 +91,7 @@ Verify:
 Verify:
 - [ ] All branches visible with `agt branch`
 - [ ] All commits visible with `agt log`
-- [ ] Extra commands available (init, fork, autocommit)
+- [ ] Extra commands available (clone, session, autocommit)
 
 ### Section: GIT COMMANDS
 
@@ -88,7 +113,7 @@ Verify:
 > agt.branchPrefix - Prefix for agent session branches
 
 Verify:
-- [ ] Fork creates branch with this prefix
+- [ ] Session creates shadow branch with this prefix
 - [ ] Filtering uses this prefix
 
 > agt.userEmail - The user's normal email for reference
@@ -97,97 +122,167 @@ Verify:
 - [ ] Document what this is actually used for
 - [ ] If not used, note the discrepancy
 
-### Section: COMMANDS - agt init
+### Section: COMMANDS - agt clone
 
-> Clones <remote-url> as a bare repository (<name>.git)
-
-Verify:
-- [ ] Creates bare repo with `.git` suffix
-
-> Creates an adjacent main checkout directory (<name>)
+> Clones <remote-url> as a bare repository into <name>/.bare/
 
 Verify:
-- [ ] Creates worktree without `.git` suffix
+- [ ] Creates `.bare/` directory
+- [ ] `.bare/` is a valid bare git repo
 
-> Sets up default agt configuration
-
-Verify:
-- [ ] What defaults are set? Verify they match docs.
-
-> Creates the agt state directory (.git/agt/)
+> Creates .git file pointing to .bare
 
 Verify:
-- [ ] `.git/agt/` exists
-- [ ] `.git/agt/timestamps/` exists
-- [ ] `.git/agt/sessions/` exists
+- [ ] `.git` is a file (not directory)
+- [ ] Contents are `gitdir: .bare`
+
+> Creates main worktree: <name>/main/
+
+Verify:
+- [ ] `main/` directory exists
+- [ ] `main/.git` points to `../.bare/worktrees/main`
+
+> Initializes AGT metadata in .bare/agt/
+
+Verify:
+- [ ] `.bare/agt/` exists
+- [ ] `.bare/agt/timestamps/` exists
+- [ ] `.bare/agt/sessions/` exists
 
 > --path <directory> - Target directory (default: current dir)
 
 Verify:
 - [ ] Option works as documented
 
-### Section: COMMANDS - agt fork
+### Section: COMMANDS - agt session new
 
-> Creates branch agtsessions/<id> from specified starting point
+> Generates session ID (or uses provided --id)
+
+Verify:
+- [ ] Auto-generates ID if not provided
+- [ ] Uses provided --id
+
+> Creates shadow branch agtsessions/<id>
 
 Verify:
 - [ ] Branch name matches pattern
-- [ ] Default starting point is HEAD
 
-> Creates worktree at sessions/<id>/
-
-Verify:
-- [ ] Worktree location matches
-
-> Initializes timestamp tracking for auto-commits
+> Creates session folder at sessions/<id>/
 
 Verify:
-- [ ] Timestamp file created
+- [ ] Folder exists at correct location
 
-> --session-id <id> - Unique identifier for the session (required)
+> Creates sandbox (git worktree at sessions/<id>/sandbox/)
 
 Verify:
-- [ ] Errors without session-id
+- [ ] `sessions/<id>/sandbox/` exists
+- [ ] Is a valid git worktree
+- [ ] `.git` file points to correct location
+
+> Creates sibling folders based on profile (xdg/, config/)
+
+Verify:
+- [ ] `sessions/<id>/xdg/` exists
+- [ ] `sessions/<id>/config/` exists
+
+> Initializes timestamp tracking for autocommits
+
+Verify:
+- [ ] Timestamp file created at `.bare/agt/timestamps/<id>`
 
 > --from <ref> - Starting point
 
 Verify:
-- [ ] Can fork from branch name
-- [ ] Can fork from commit SHA
-- [ ] Can fork from another session ID
+- [ ] Can create session from branch name
+- [ ] Can create session from commit SHA
+- [ ] Default is HEAD
+
+### Section: COMMANDS - agt session export
+
+> Verifies no uncommitted changes in sandbox (fails if dirty)
+
+Verify:
+- [ ] Fails if sandbox has uncommitted changes
+
+> Pushes branch to origin
+
+Verify:
+- [ ] User branch pushed to remote
+
+> Shadow branches are NEVER pushed to origin
+
+Verify:
+- [ ] Shadow branch NOT on remote after export
+
+### Section: COMMANDS - agt session remove
+
+> Removes session folder (sessions/<id>/)
+
+Verify:
+- [ ] Folder removed
+
+> Removes git worktree
+
+Verify:
+- [ ] Worktree entry removed from `.bare/worktrees/`
+
+> Deletes shadow branch if --delete-branch
+
+Verify:
+- [ ] With flag: branch deleted
+- [ ] Without flag: branch preserved
+
+### Section: COMMANDS - agt session fork
+
+> Fork an existing session to create a parallel session
+
+Verify:
+- [ ] Creates new session from existing session state
+- [ ] New session has its own shadow branch
+
+### Section: COMMANDS - agt session list
+
+> List all agent sessions with their status
+
+Verify:
+- [ ] Command exists
+- [ ] Shows session ID
+- [ ] Shows shadow branch name
+- [ ] Shows sandbox path
 
 ### Section: COMMANDS - agt autocommit
 
-> Reads last autocommit timestamp from .git/agt/timestamps/<id>
+> Reads last autocommit timestamp from .bare/agt/timestamps/<id>
 
 Verify:
 - [ ] Timestamp file read correctly
 
-> Scans <path> for files with mtime >= last timestamp
+> Scans the session folder for files with mtime >= last timestamp
 
 Verify:
 - [ ] Only modified files captured
-- [ ] Timestamp comparison works
+- [ ] Scans entire session folder (not just sandbox)
 
-> Creates a tree object from all modified files (ignores .gitignore)
-
-Verify:
-- [ ] .gitignore'd files ARE captured
-
-> Creates a commit on agtsessions/<id> with:
-> - Parent 1: last commit on agtsessions/<id>
-> - Parent 2: current HEAD of the worktree's tracked branch
+> Builds shadow tree from session folder contents
 
 Verify:
-- [ ] Commit has two parents
-- [ ] Parent order is correct
+- [ ] Shadow tree includes sandbox/
+- [ ] Shadow tree includes xdg/
+- [ ] Shadow tree includes config/
+- [ ] Shadow tree includes _/
+
+> Creates shadow commit with two parents
+
+Verify:
+- [ ] Parent 1: previous shadow commit
+- [ ] Parent 2: user branch HEAD
 
 > Updates the timestamp file
 
 Verify:
 - [ ] Timestamp updated after commit
 
-> --timestamp <epoch> - Override scan timestamp (for testing)
+> --timestamp <epoch> - Override scan timestamp
 
 Verify:
 - [ ] Override works for testing
@@ -196,28 +291,6 @@ Verify:
 
 Verify:
 - [ ] Dry run shows files without committing
-
-### Section: COMMANDS - agt list-sessions
-
-> List all agent sessions with their status
-
-Verify:
-- [ ] Command exists
-- [ ] Shows session ID
-- [ ] Shows branch name
-- [ ] Shows worktree path
-
-### Section: COMMANDS - agt prune-session
-
-> Remove an agent session's worktree
-
-Verify:
-- [ ] Worktree removed
-
-> --delete-branch - Also delete the session branch
-
-Verify:
-- [ ] Flag works
 
 ### Section: COMMANDS - agt status
 
@@ -236,7 +309,7 @@ Verify:
 Verify:
 - [ ] Works in git mode
 
-> -C <path> - Run as if git was started in <path>
+> -C <path> - Run as if started in <path>
 
 Verify:
 - [ ] Works for agt commands
@@ -244,20 +317,20 @@ Verify:
 
 ### Section: FILES
 
-> .git/agt/timestamps/<session-id>
+> .bare/agt/timestamps/<session-id>
 
 Verify:
 - [ ] Location matches
 
-> .git/agt/sessions/<session-id>.json
+> .bare/agt/sessions/<session-id>.json
 
 Verify:
-- [ ] Does this file exist? If not, documentation error.
+- [ ] File exists with session metadata
 
-> sessions/<session-id>/ - Default location for agent session worktrees
+> sessions/<session-id>/ - Session folder
 
 Verify:
-- [ ] Location matches
+- [ ] Layout matches: sandbox/, xdg/, config/, _/
 
 ### Section: ENVIRONMENT
 
@@ -275,15 +348,34 @@ Verify:
 
 Walk through each example in the EXAMPLES section and verify it works.
 
-### Section: REPOSITORY LAYOUT
+- [ ] `agt clone https://github.com/user/project.git`
+- [ ] `cd project/main`
+- [ ] `agt session new --id agent-001`
+- [ ] `cd sessions/agent-001/sandbox`
+- [ ] `agt autocommit -C sessions/agent-001 --session-id agent-001`
+- [ ] `agt session export --session-id agent-001`
+- [ ] `agt session fork --from agent-001 --id agent-002`
+- [ ] `agt session list`
+- [ ] `agt session remove --id agent-001 --delete-branch`
 
-> project.git/           # Bare repository
-> project/               # Main user worktree
-> ├── .git               # File pointing to ../project.git
-> └── sessions/          # Agent worktrees
+### Section: ARCHITECTURE
 
-Verify:
-- [ ] Layout matches after `agt init`
+> Repository Layout (after agt clone)
+
+Verify layout matches:
+```
+project/
+├── .bare/
+├── .git
+├── main/
+│   └── .git
+└── sessions/
+    └── agent-001/
+        ├── sandbox/
+        ├── xdg/
+        ├── config/
+        └── _/
+```
 
 ### Section: EXIT STATUS
 

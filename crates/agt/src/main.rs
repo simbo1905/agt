@@ -6,6 +6,7 @@ mod commands;
 mod config;
 mod filter;
 mod gix_cli;
+mod isolation;
 mod scanner;
 
 pub use cli::*;
@@ -29,31 +30,29 @@ fn main() -> Result<()> {
     }
 
     // Handle init command before discovering repo (init doesn't need existing repo)
-    if let Some(Commands::Init { remote_url, path }) = cli.command {
+    if let Some(Commands::Clone { remote_url, path }) = cli.command.clone() {
         let config = config::AgtConfig::load_for_init();
-        return commands::init::run(&remote_url, path.as_deref(), &config);
+        return commands::clone::run(&remote_url, path.as_deref(), &config);
     }
 
     // Determine if filtering should be disabled
     let disable_filter = cli.disable_agt || std::env::var("AGT_DISABLE_FILTER").is_ok();
 
     // Load configuration (from ~/.agtconfig and .agt/config)
-    let config =
-        config::AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
+    let config = config::AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
 
     // Discover repo
     let repo = gix::discover(".").with_context(|| "Failed to discover Git repository")?;
 
     // Route to appropriate command handler
     match cli.command {
-        Some(Commands::Init { .. }) => unreachable!(), // Handled above
-        Some(Commands::Fork { session_id, from }) => {
-            commands::fork::run(&repo, &session_id, from.as_deref(), &config)
-        }
+        Some(Commands::Clone { .. }) => unreachable!(), // handled above
+        Some(Commands::Session(session_cmd)) => commands::session::run(&repo, session_cmd, &config),
         Some(Commands::Autocommit {
             session_id,
             timestamp,
             dry_run,
+            siblings,
         }) => {
             let worktree_path = std::env::current_dir()?;
             commands::autocommit::run(
@@ -62,14 +61,10 @@ fn main() -> Result<()> {
                 &session_id,
                 timestamp,
                 dry_run,
+                siblings,
                 &config,
             )
         }
-        Some(Commands::ListSessions) => commands::list_sessions::run(&repo, &config),
-        Some(Commands::PruneSession {
-            session_id,
-            delete_branch,
-        }) => commands::prune_session::run(&repo, &session_id, delete_branch, &config),
         Some(Commands::Status) => commands::status::run(&repo, &config),
         None => {
             // Git passthrough mode
@@ -110,8 +105,7 @@ fn run_git_mode() -> Result<()> {
     }
 
     // Load configuration (from ~/.agtconfig and .agt/config)
-    let config =
-        config::AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
+    let config = config::AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
 
     let repo = gix::discover(".").with_context(|| "Failed to discover Git repository")?;
 
