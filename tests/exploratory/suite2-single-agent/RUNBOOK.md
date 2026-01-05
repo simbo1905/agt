@@ -46,12 +46,12 @@ Steps:
 2. Run `agt clone <url>`
 3. Verify the expected layout:
    - `<name>/` - project directory
-   - `<name>/.bare/` - bare repository
-   - `<name>/.git` - file containing `gitdir: .bare`
+   - `<name>.git/` - bare repository
+   - `<name>/.git` - file containing `gitdir: ../<name>.git`
    - `<name>/main/` - main worktree (user's working directory)
-   - `<name>/main/.git` - file pointing to `../.bare/worktrees/main`
-   - `<name>/.bare/agt/timestamps/` - exists
-   - `<name>/.bare/agt/sessions/` - exists
+   - `<name>/main/.git` - file pointing to `../<name>.git/worktrees/main`
+   - `<name>.git/agt/timestamps/` - exists
+   - `<name>.git/agt/sessions/` - exists
 
 Success: Layout matches docs/agt.1.txt ARCHITECTURE section
 
@@ -68,7 +68,7 @@ Steps:
    - Sandbox at `sessions/agent-001/sandbox/` exists
    - xdg folder at `sessions/agent-001/xdg/` exists
    - config folder at `sessions/agent-001/config/` exists
-   - Timestamp file at `.bare/agt/timestamps/agent-001` exists
+   - Timestamp file at `<name>.git/agt/timestamps/agent-001` exists
    - Can `cd sessions/agent-001/sandbox` and it's a valid git checkout
 
 Success: Session infrastructure created correctly
@@ -98,6 +98,7 @@ Steps:
    - `sandbox/` - agent's code files
    - `xdg/` - tool state (may be empty)
    - `config/` - tool config (may be empty)
+   - `_/index` - captured git index for the sandbox worktree
 
 Success: Autocommit creates shadow commit with session folder contents
 

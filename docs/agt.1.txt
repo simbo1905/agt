@@ -80,17 +80,17 @@ COMMANDS
 
               1. Parses the git URL to extract org/repo
               2. Creates directory structure: <name>/
-              3. Clones <remote-url> as a bare repository into <name>/.bare/
-              4. Creates .git file pointing to .bare
+              3. Clones <remote-url> as a bare repository into <name>.git/ (sibling to <name>/)
+              4. Creates .git file in <name>/ pointing to ../<name>.git
               5. Creates main worktree: <name>/main/
-              6. Initializes AGT metadata in .bare/agt/
+              6. Initializes AGT metadata in <name>.git/agt/
 
               Result:
-                  <name>/
-                  ├── .bare/          # Bare repository (git database)
-                  ├── .git            # Text file: "gitdir: .bare"
+                  <name>.git/         # Bare repository (git database)
+                  <name>/             # Project directory
+                  ├── .git            # Text file: "gitdir: ../<name>.git"
                   ├── main/           # Primary worktree (main branch)
-                  │   └── .git        # Text file: "gitdir: ../.bare/worktrees/main"
+                  │   └── .git        # Text file: "gitdir: ../<name>.git/worktrees/main"
                   └── sessions/       # Session folders created here
 
               Options:
@@ -113,7 +113,7 @@ COMMANDS
               Session folder layout:
                   sessions/<id>/
                   ├── sandbox/        # Agent runs here (agt-sandbox workspace)
-                  │   └── .git        # Points to ../../../.bare/worktrees/sandbox
+                  │   └── .git        # Points into the bare repo's worktrees/ for this session
                   ├── xdg/            # XDG_DATA_HOME (tool state)
                   ├── config/         # XDG_CONFIG_HOME (tool config)
                   └── _/              # AGT system folder
@@ -188,7 +188,7 @@ COMMANDS
               Create a shadow commit capturing the entire session state.
 
               This command:
-              1. Reads last autocommit timestamp from .bare/agt/timestamps/<id>
+              1. Reads last autocommit timestamp from the bare repo's agt/timestamps/<id>
               2. Scans the session folder for files with mtime >= last timestamp
               3. Builds shadow tree from session folder contents:
                  - sandbox/ (agent's code work)
@@ -290,9 +290,9 @@ FILES
 
        .agt/config
               Local repository agt configuration. Overrides global settings.
-              Located in the project root (sibling to .bare/).
+              Located in the project root (sibling to the bare repo directory, e.g. project.git/).
 
-       .bare/agt/
+       <name>.git/agt/
               AGT state directory stored in the bare repository. Contains:
 
               timestamps/<session-id>

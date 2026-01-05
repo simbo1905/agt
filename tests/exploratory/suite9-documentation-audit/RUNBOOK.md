@@ -127,14 +127,14 @@ Verify:
 > Clones <remote-url> as a bare repository into <name>/.bare/
 
 Verify:
-- [ ] Creates `.bare/` directory
-- [ ] `.bare/` is a valid bare git repo
+- [ ] Creates `<name>.git/` directory
+- [ ] `<name>.git/` is a valid bare git repo
 
-> Creates .git file pointing to .bare
+> Creates .git file in <name>/ pointing to ../<name>.git
 
 Verify:
 - [ ] `.git` is a file (not directory)
-- [ ] Contents are `gitdir: .bare`
+- [ ] Contents are `gitdir: ../<name>.git`
 
 > Creates main worktree: <name>/main/
 
@@ -145,9 +145,9 @@ Verify:
 > Initializes AGT metadata in .bare/agt/
 
 Verify:
-- [ ] `.bare/agt/` exists
-- [ ] `.bare/agt/timestamps/` exists
-- [ ] `.bare/agt/sessions/` exists
+- [ ] `<name>.git/agt/` exists
+- [ ] `<name>.git/agt/timestamps/` exists
+- [ ] `<name>.git/agt/sessions/` exists
 
 > --path <directory> - Target directory (default: current dir)
 
@@ -188,7 +188,7 @@ Verify:
 > Initializes timestamp tracking for autocommits
 
 Verify:
-- [ ] Timestamp file created at `.bare/agt/timestamps/<id>`
+- [ ] Timestamp file created at `<name>.git/agt/timestamps/<id>`
 
 > --from <ref> - Starting point
 
@@ -224,7 +224,7 @@ Verify:
 > Removes git worktree
 
 Verify:
-- [ ] Worktree entry removed from `.bare/worktrees/`
+- [ ] Worktree entry removed from `<name>.git/worktrees/`
 
 > Deletes shadow branch if --delete-branch
 
@@ -255,7 +255,7 @@ Verify:
 > Reads last autocommit timestamp from .bare/agt/timestamps/<id>
 
 Verify:
-- [ ] Timestamp file read correctly
+- [ ] Timestamp file read correctly from `<name>.git/agt/timestamps/<id>`
 
 > Scans the session folder for files with mtime >= last timestamp
 
