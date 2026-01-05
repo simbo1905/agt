@@ -190,10 +190,20 @@ make build
 # Test
 cargo test
 
+# Generate PDFs and SVG diagrams from DESIGN_*.md
+make docs
+# Output: .tmp/DESIGN_*.pdf and .tmp/diagram-*.svg
+
 # Binaries are in dist/
 ls dist/
 # agt  agt-worktree
 ```
+
+## Pre-Flight Check
+
+Before making code changes, run `make docs` and visually inspect:
+- `.tmp/*.svg` - Verify mermaid diagrams render correctly
+- Compare diagrams against `docs/agt.1.txt` and `DESIGN_*.md` for consistency
 
 ## Important Notes
 

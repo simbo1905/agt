@@ -5,3 +5,5 @@ dist/
 *.rs.bk
 *.swp
 auth.json
+bin/.venv/
+bin/uv.lock

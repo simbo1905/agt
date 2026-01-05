@@ -409,6 +409,28 @@ When documentation doesn't match behavior:
 - Every documented feature works as described
 - All discrepancies identified and classified
 - Recommendations made for fixes
+- Diagram audit passes (see below)
+
+## Diagram Audit
+
+Before running the documentation checks, generate and inspect diagrams:
+
+1. Run `make docs` from the repository root
+2. Verify `.tmp/DESIGN_*.pdf` files are generated without errors
+3. Open `.tmp/*.svg` and verify:
+   - All mermaid diagrams render (no error placeholders)
+   - Sequence diagram participants match component names in `DESIGN_20260104.md`
+   - Numbered steps in sequence diagrams have corresponding table entries
+   - Flowchart components align with terminology in `docs/agt.1.txt`
+
+Checklist:
+- [ ] `make docs` completes successfully
+- [ ] All `.tmp/diagram-*.svg` files are valid SVG (not error output)
+- [ ] Component diagram shows: agt CLI, Host Git Binary, agent sandbox helper
+- [ ] Sequence diagrams use consistent participant IDs (P1-P8)
+- [ ] Step tables below each sequence diagram match the numbered arrows
+
+**FAIL if**: Any diagram fails to render, or diagram content contradicts `docs/agt.1.txt`.
 
 ## Failure Modes
 

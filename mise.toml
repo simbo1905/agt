@@ -1,2 +1,4 @@
 [tools]
 rust = "1.83"
+uv = "latest"
+node = "22"
