@@ -93,6 +93,15 @@ pub enum SessionCommands {
         id: Option<String>,
     },
 
+    /// Restore session to a prior shadow commit state
+    Restore {
+        #[arg(long)]
+        session_id: String,
+        /// Shadow commit SHA to restore to
+        #[arg(long)]
+        commit: String,
+    },
+
     /// List sessions
     List,
 }

@@ -717,3 +717,403 @@ fn ensure_worktree_tool() -> Result<PathBuf, Box<dyn std::error::Error>> {
         Err("agt-worktree binary not found after build".into())
     }
 }
+
+#[test]
+fn test_restore_resets_sandbox_to_shadow_commit() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_repo_with_session()?;
+    let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
+
+    fs::write(sandbox_path.join("file-a.txt"), "version 1")?;
+    agt_cmd_with_git()?
+        .args([
+            "autocommit",
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+        ])
+        .current_dir(&sandbox_path)
+        .assert()
+        .success();
+
+    let gix_repo = gix::open(repo.worktree())?;
+    let mut branch_ref = gix_repo.find_reference("refs/heads/agtsessions/test-session")?;
+    let first_commit = branch_ref.peel_to_commit()?.id;
+
+    fs::write(sandbox_path.join("file-a.txt"), "version 2")?;
+    fs::write(sandbox_path.join("file-b.txt"), "new file")?;
+    agt_cmd_with_git()?
+        .args([
+            "autocommit",
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+        ])
+        .current_dir(&sandbox_path)
+        .assert()
+        .success();
+
+    assert!(sandbox_path.join("file-b.txt").exists());
+    assert_eq!(fs::read_to_string(sandbox_path.join("file-a.txt"))?, "version 2");
+
+    agt_cmd_with_git()?
+        .args([
+            "session",
+            "restore",
+            "--session-id",
+            "test-session",
+            "--commit",
+            &first_commit.to_string(),
+        ])
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    assert!(!sandbox_path.join("file-b.txt").exists());
+    assert_eq!(fs::read_to_string(sandbox_path.join("file-a.txt"))?, "version 1");
+
+    Ok(())
+}
+
+#[test]
+fn test_restore_resets_agent_state_folders() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_repo_with_session()?;
+    let session_folder = repo.repo_root().join("sessions/test-session");
+    let sandbox_path = session_folder.join("sandbox");
+    let config_dir = session_folder.join("config");
+    let xdg_dir = session_folder.join("xdg");
+
+    fs::create_dir_all(&config_dir)?;
+    fs::create_dir_all(&xdg_dir)?;
+    fs::write(config_dir.join("agent.json"), r#"{"model": "gpt-4"}"#)?;
+    fs::write(xdg_dir.join("state.db"), "initial state")?;
+
+    agt_cmd_with_git()?
+        .args([
+            "autocommit",
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+        ])
+        .current_dir(&sandbox_path)
+        .assert()
+        .success();
+
+    let gix_repo = gix::open(repo.worktree())?;
+    let mut branch_ref = gix_repo.find_reference("refs/heads/agtsessions/test-session")?;
+    let first_commit = branch_ref.peel_to_commit()?.id;
+
+    fs::write(config_dir.join("agent.json"), r#"{"model": "claude-3"}"#)?;
+    fs::write(xdg_dir.join("state.db"), "modified state")?;
+    fs::write(xdg_dir.join("new-file.txt"), "new")?;
+    agt_cmd_with_git()?
+        .args([
+            "autocommit",
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+        ])
+        .current_dir(&sandbox_path)
+        .assert()
+        .success();
+
+    agt_cmd_with_git()?
+        .args([
+            "session",
+            "restore",
+            "--session-id",
+            "test-session",
+            "--commit",
+            &first_commit.to_string(),
+        ])
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(config_dir.join("agent.json"))?,
+        r#"{"model": "gpt-4"}"#
+    );
+    assert_eq!(fs::read_to_string(xdg_dir.join("state.db"))?, "initial state");
+    assert!(!xdg_dir.join("new-file.txt").exists());
+
+    Ok(())
+}
+
+#[test]
+fn test_restore_continues_autocommit_with_correct_parent() -> Result<(), Box<dyn std::error::Error>>
+{
+    let repo = setup_repo_with_session()?;
+    let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
+
+    fs::write(sandbox_path.join("a.txt"), "a")?;
+    agt_cmd_with_git()?
+        .args([
+            "autocommit",
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+        ])
+        .current_dir(&sandbox_path)
+        .assert()
+        .success();
+
+    let gix_repo = gix::open(repo.worktree())?;
+    let mut branch_ref = gix_repo.find_reference("refs/heads/agtsessions/test-session")?;
+    let first_commit_id = branch_ref.peel_to_commit()?.id;
+
+    fs::write(sandbox_path.join("b.txt"), "b")?;
+    agt_cmd_with_git()?
+        .args([
+            "autocommit",
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+        ])
+        .current_dir(&sandbox_path)
+        .assert()
+        .success();
+
+    agt_cmd_with_git()?
+        .args([
+            "session",
+            "restore",
+            "--session-id",
+            "test-session",
+            "--commit",
+            &first_commit_id.to_string(),
+        ])
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    fs::write(sandbox_path.join("c.txt"), "c")?;
+    agt_cmd_with_git()?
+        .args([
+            "autocommit",
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+        ])
+        .current_dir(&sandbox_path)
+        .assert()
+        .success();
+
+    let gix_repo = gix::open(repo.worktree())?;
+    let mut branch_ref = gix_repo.find_reference("refs/heads/agtsessions/test-session")?;
+    let new_commit = branch_ref.peel_to_commit()?;
+    let parents: Vec<_> = new_commit.parent_ids().map(|id| id.to_owned()).collect();
+
+    assert_eq!(parents.len(), 2);
+    assert_eq!(parents[0], first_commit_id);
+
+    Ok(())
+}
+
+#[test]
+fn test_restore_deletes_files_not_in_shadow_tree() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_repo_with_session()?;
+    let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
+
+    fs::write(sandbox_path.join("keep.txt"), "keep")?;
+    agt_cmd_with_git()?
+        .args([
+            "autocommit",
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+        ])
+        .current_dir(&sandbox_path)
+        .assert()
+        .success();
+
+    let gix_repo = gix::open(repo.worktree())?;
+    let mut branch_ref = gix_repo.find_reference("refs/heads/agtsessions/test-session")?;
+    let first_commit = branch_ref.peel_to_commit()?.id;
+
+    fs::write(sandbox_path.join("extra.txt"), "extra")?;
+    agt_cmd_with_git()?
+        .args([
+            "autocommit",
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+        ])
+        .current_dir(&sandbox_path)
+        .assert()
+        .success();
+
+    assert!(sandbox_path.join("extra.txt").exists());
+
+    agt_cmd_with_git()?
+        .args([
+            "session",
+            "restore",
+            "--session-id",
+            "test-session",
+            "--commit",
+            &first_commit.to_string(),
+        ])
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    assert!(sandbox_path.join("keep.txt").exists());
+    assert!(!sandbox_path.join("extra.txt").exists());
+
+    Ok(())
+}
+
+#[test]
+fn test_restore_preserves_tracked_file_content() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_repo_with_session()?;
+    let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
+
+    let bare_repo = gix::open(&repo.bare)?;
+    let main_worktree = repo.worktree();
+
+    fs::write(main_worktree.join("tracked.txt"), "original tracked")?;
+    commit_worktree(
+        &bare_repo,
+        main_worktree,
+        "refs/heads/main",
+        "Add tracked file",
+        "agt@local",
+    )?;
+
+    fs::write(sandbox_path.join("tracked.txt"), "original tracked")?;
+    agt_cmd_with_git()?
+        .args([
+            "autocommit",
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+        ])
+        .current_dir(&sandbox_path)
+        .assert()
+        .success();
+
+    fs::write(sandbox_path.join("tracked.txt"), "modified tracked")?;
+    agt_cmd_with_git()?
+        .args([
+            "autocommit",
+            "--session-id",
+            "test-session",
+            "--timestamp",
+            "0",
+        ])
+        .current_dir(&sandbox_path)
+        .assert()
+        .success();
+
+    let gix_repo = gix::open(repo.worktree())?;
+    let mut branch_ref = gix_repo.find_reference("refs/heads/agtsessions/test-session")?;
+    let target_commit = branch_ref.peel_to_commit()?.id;
+
+    fs::write(sandbox_path.join("tracked.txt"), "drift")?;
+
+    agt_cmd_with_git()?
+        .args([
+            "session",
+            "restore",
+            "--session-id",
+            "test-session",
+            "--commit",
+            &target_commit.to_string(),
+        ])
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(sandbox_path.join("tracked.txt"))?,
+        "modified tracked"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_export_requires_clean_worktree() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_repo_with_session()?;
+    let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
+
+    fs::write(sandbox_path.join("uncommitted.txt"), "dirty")?;
+
+    let output = agt_cmd_with_git()?
+        .args(["session", "export", "--session-id", "test-session"])
+        .current_dir(repo.worktree())
+        .output()?;
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("uncommitted") || stderr.contains("commit"));
+
+    Ok(())
+}
+
+#[test]
+fn test_export_pushes_user_branch() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+
+    let remote_bare = tmp.path().join("remote.git");
+    fs::create_dir_all(&remote_bare)?;
+    init_bare_repo_with_commit(&remote_bare)?;
+
+    let local = tmp.path().join("local");
+    fs::create_dir_all(&local)?;
+
+    agt_cmd_with_git()?
+        .args(["clone", remote_bare.to_str().unwrap()])
+        .current_dir(&local)
+        .assert()
+        .success();
+
+    let worktree = local.join("remote/main");
+    write_agt_config(&worktree, "agt@local", "agtsessions/")?;
+
+    agt_cmd_with_git()?
+        .args(["session", "new", "--id", "export-test"])
+        .current_dir(&worktree)
+        .assert()
+        .success();
+
+    let sandbox_path = local.join("remote/sessions/export-test/sandbox");
+    fs::write(sandbox_path.join("exported.txt"), "content")?;
+
+    let git_path = find_real_git()?;
+    Command::new(&git_path)
+        .current_dir(&sandbox_path)
+        .args(["add", "exported.txt"])
+        .status()?;
+    Command::new(&git_path)
+        .current_dir(&sandbox_path)
+        .args(["commit", "-m", "add exported file"])
+        .status()?;
+
+    agt_cmd_with_git()?
+        .args(["session", "export", "--session-id", "export-test"])
+        .current_dir(&worktree)
+        .assert()
+        .success();
+
+    let output = Command::new(&git_path)
+        .current_dir(&remote_bare)
+        .args(["branch", "-a"])
+        .output()?;
+    let branches = String::from_utf8_lossy(&output.stdout);
+
+    assert!(branches.contains("agtsessions/export-test"));
+    assert!(!branches.contains("main") || branches.contains("main"));
+
+    Ok(())
+}

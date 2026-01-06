@@ -3,7 +3,7 @@
 ## Objective
 
 Verify the ability to:
-1. Roll back an agent session to any previous state
+1. Roll back an agent session to any previous shadow commit state
 2. Fork from any point in agent history
 3. Recover from bad agent decisions
 4. Maintain complete history despite rollbacks
@@ -20,11 +20,9 @@ Verify the ability to:
 
 ## Reference
 
-Read `docs/agt.1.txt`:
-- "Roll back to any point in agent history"
-- "Fork from any state"
-- Commit graph section
-- Examples section: "Roll back an agent session by 3 commits"
+Read `DESIGN_20260104.md`:
+- Section 4: "Snapshot Restore Process"
+- Section 3: "Shadow Branch Topology"
 
 ## Scenarios
 
@@ -33,148 +31,162 @@ Read `docs/agt.1.txt`:
 Create an agent with multiple autocommits.
 
 Steps:
-1. Fork agent session
-2. Create file A, autocommit
+1. Create session: `agt session new --id agent-alpha`
+2. In sandbox, create file A, run `agt autocommit --session-id agent-alpha`
 3. Create file B, autocommit
 4. Create file C, autocommit
 5. Modify file A, autocommit
 6. Delete file B, autocommit
-7. Record all commit SHAs
+7. Record all shadow commit SHAs: `git log agtsessions/agent-alpha --oneline`
 
 Success: 5 commits on shadow branch, each with different file states
 
-### Scenario 4.2: Roll Back One Commit
+### Scenario 4.2: Restore to Previous Shadow Commit
 
-Undo the last change.
+Undo the last change using agt session restore.
 
 Steps:
 1. Note current state (no file B, modified A)
-2. Roll back one commit: `git reset --hard HEAD~1`
-3. Verify file B still deleted (wait, that's HEAD~2)
-4. Verify file A is back to modified state
-5. Check that working directory matches the commit
+2. Find shadow commit SHA where file B still exists
+3. Restore: `agt session restore --session-id agent-alpha --commit <SHA>`
+4. Verify file B is restored
+5. Verify file A is in state from that commit
+6. Verify git index is restored from `_/index`
+7. Verify agent config/state folders match that commit
 
-Success: Working directory reflects previous commit state
+Success: Complete session state (sandbox + agent state + index) reflects historical commit
 
-### Scenario 4.3: Roll Back Multiple Commits
+### Scenario 4.3: Restore Multiple Commits Back
 
 Go back further in time.
 
 Steps:
-1. Reset to the commit where file B still exists
-2. Verify files A, B, C all exist
-3. Verify file A is in original state
-4. Git log still shows full history (commits not deleted)
+1. Restore to the commit where file A was just created (first autocommit)
+2. Verify only file A exists in sandbox
+3. Verify agent state folders reflect that point in time
+4. Shadow branch log still shows full history (commits not deleted)
 
-Success: Can jump to arbitrary past state
+Success: Can jump to arbitrary past state with full session restoration
 
-### Scenario 4.4: Continue from Rolled Back State
+### Scenario 4.4: Continue from Restored State
 
-Resume work after rollback.
+Resume work after restore.
 
 Steps:
-1. From rolled-back state, make new changes
-2. Autocommit
-3. Verify new commit's parent is the rolled-back-to commit
-4. History now has a fork (though old commits may become unreachable)
+1. From restored state, make new changes in sandbox
+2. Run `agt autocommit --session-id agent-alpha`
+3. Verify new shadow commit's parent1 is the restored-to commit
+4. Verify parent2 is current user branch tip
+5. History now has a fork (though old commits may become unreachable)
 
-Success: Can continue working from any point
+Success: Can continue working from any restored point
 
 ### Scenario 4.5: Fork from Historical Point
 
 Create new agent from past state of another agent.
 
 Steps:
-1. Reset agent-alpha to historical commit
-2. Fork agent-omega from current HEAD (historical point)
+1. Restore agent-alpha to historical commit
+2. Fork: `agt session fork --from agent-alpha --id agent-omega`
 3. Agent-omega makes different changes
-4. Autocommit
+4. Autocommit both sessions
 5. Verify agent-omega has independent history
 
 Success: Can branch timelines
 
-### Scenario 4.6: Recover Uncommitted Work After Rollback
+### Scenario 4.6: Uncommitted Work and Restore
 
-What happens to uncommitted changes during reset?
-
-Steps:
-1. Agent makes changes but doesn't autocommit
-2. Reset to earlier commit
-3. Observe: uncommitted changes are LOST
-4. Document this behavior - it's expected git behavior
-
-Success: Test documents expected behavior (uncommitted = lost on reset)
-
-### Scenario 4.7: Reflog Recovery
-
-Use git reflog to find "lost" commits.
+What happens to uncommitted sandbox changes during restore?
 
 Steps:
-1. Create commits
-2. Reset back
-3. Create new commits (branching history)
-4. Use reflog to find the "abandoned" commits
-5. Cherry-pick or checkout those commits
+1. Agent makes changes in sandbox but doesn't autocommit
+2. Restore to earlier commit
+3. Observe: uncommitted changes are LOST (replaced by shadow tree)
+4. Document this behavior - autocommit before restore to preserve work
 
-Success: Reflog preserves full history
+Success: Test documents expected behavior (uncommitted = lost on restore)
 
-### Scenario 4.8: Time Travel with User Branch Evolution
+### Scenario 4.7: Shadow Commit Recovery via Reflog
 
-Rollback while user branch has advanced.
-
-Steps:
-1. Agent at commit A (parent: user@1)
-2. Agent autocommit B (parent: user@2)
-3. Agent autocommit C (parent: user@3)
-4. Roll back to A
-5. User makes commit user@4
-6. Agent autocommit D from state A
-7. Verify D has parents: A and user@4
-
-Success: Time travel integrates with user branch tracking
-
-### Scenario 4.9: Stash as Alternative to Rollback
-
-Using stash instead of hard reset.
+Use git reflog to find "abandoned" shadow commits after restore.
 
 Steps:
-1. Agent has uncommitted changes
-2. Stash changes
-3. Explore previous commits
-4. Pop stash to restore
+1. Create multiple autocommits
+2. Restore to earlier state
+3. Create new autocommits (branching shadow history)
+4. Use reflog: `git reflog agtsessions/agent-alpha`
+5. Restore to one of the "abandoned" commits
 
-Success: Stash provides non-destructive rollback
+Success: Reflog preserves full shadow branch history
 
-### Scenario 4.10: Partial Rollback - Single File
+### Scenario 4.8: Restore with Evolved User Branch
 
-Restore one file from history.
+Restore while user branch has advanced.
 
 Steps:
-1. Agent has modified multiple files across commits
-2. Use `git checkout <commit> -- <file>` to restore single file
-3. Autocommit
-4. Verify only that file changed, others preserved
+1. Agent at shadow commit SC1 (parent2 = user@1)
+2. Agent autocommit SC2 (parent2 = user@2)
+3. Agent autocommit SC3 (parent2 = user@3)
+4. Restore to SC1
+5. User makes commit user@4 on user branch
+6. Agent autocommit SC4 from restored state
+7. Verify SC4 has: parent1 = SC1, parent2 = user@4
 
-Success: Selective file-level time travel works
+Success: Restore preserves dual-parent tracking with current user branch
+
+### Scenario 4.9: Verify Index Restoration
+
+Confirm git index is properly restored.
+
+Steps:
+1. In sandbox, stage files: `git add file1.txt file2.txt`
+2. Do NOT commit to user branch
+3. Run autocommit (captures staged files in `_/index`)
+4. Unstage files: `git reset HEAD`
+5. Make other changes and autocommit
+6. Restore to earlier commit with staged files
+7. Verify `git status` shows file1.txt and file2.txt as staged
+
+Success: Git index state is restored from `_/index`
+
+### Scenario 4.10: Verify .gitignore Files Restored
+
+Confirm files ignored by user branch are restored.
+
+Steps:
+1. Create `node_modules/` in sandbox (typically in .gitignore)
+2. Autocommit (shadow tree includes node_modules)
+3. Delete `node_modules/`
+4. Autocommit
+5. Restore to commit where node_modules existed
+6. Verify `node_modules/` is restored
+
+Success: Shadow commits capture and restore .gitignore'd files
 
 ## Success Criteria
 
-- Hard reset to any commit works
-- Working directory accurately reflects historical state
-- New work from historical point creates proper commits
-- Dual-parent tracking continues correctly after rollback
-- Reflog preserves abandoned commits
+- `agt session restore` restores complete session folder state
+- Sandbox directory matches historical shadow tree
+- Agent config/state folders (xdg/, config/) are restored
+- Git index is restored from `_/index`
+- .gitignore'd files are restored from shadow tree
+- New autocommits from restored state have correct dual-parents
+- Reflog preserves abandoned shadow commits
 
 ## Failure Modes
 
-- Reset doesn't update working directory
-- Files from "future" commits persist after reset
-- Autocommit after rollback has wrong parent
-- Dual-parent breaks after time travel
-- Reflog doesn't show abandoned commits
+- Restore only affects sandbox, not agent state folders
+- Git index not restored (staged files lost)
+- .gitignore'd files not restored
+- Autocommit after restore has wrong parent1
+- Dual-parent tracking breaks after restore
+- Reflog doesn't show abandoned shadow commits
 
 ## Critical Understanding
 
-The key insight: Git's immutable object store means commits are NEVER truly deleted. Even after rollback, the "future" commits still exist in the object store and can be recovered via reflog or if you know the SHA.
+The key insight: AGT's shadow commits capture the COMPLETE session state, not just user code. Restore reconstructs:
+1. The sandbox with user code AND .gitignore'd build artifacts
+2. The agent config and state folders
+3. The git index (staged but uncommitted changes)
 
-This is what makes time travel safe - you can always get back to any state that was ever autocommitted.
+This is fundamentally different from `git reset --hard` which only affects the user branch worktree. Use `agt session restore` for full time travel.

@@ -41,6 +41,9 @@ pub fn run(repo: &Repository, command: SessionCommands, config: &AgtConfig) -> R
         SessionCommands::Remove { id, delete_branch } => {
             super::prune_session::run(repo, &id, delete_branch, config)
         }
+        SessionCommands::Restore { session_id, commit } => {
+            restore_session(repo, config, &session_id, &commit)
+        }
         SessionCommands::List => super::list_sessions::run(repo, config),
     }
 }
@@ -181,6 +184,173 @@ fn export_session(
     }
 
     println!("Export complete for session {session_id}");
+    Ok(())
+}
+
+fn restore_session(
+    repo: &Repository,
+    config: &AgtConfig,
+    session_id: &str,
+    commit_spec: &str,
+) -> Result<()> {
+    let metadata = load_metadata(repo, session_id)?;
+    let sandbox_path = PathBuf::from(&metadata.sandbox);
+
+    let session_folder = sandbox_path
+        .parent()
+        .context("Sandbox has no parent directory")?;
+
+    let shadow_commit = repo
+        .rev_parse_single(commit_spec)?
+        .object()?
+        .peel_to_commit()?;
+
+    let parents: Vec<_> = shadow_commit.parent_ids().collect();
+    if parents.len() < 2 {
+        bail!("Shadow commit must have two parents (shadow + user branch)");
+    }
+    let user_branch_commit = parents[1].detach();
+
+    let shadow_tree = shadow_commit.tree()?;
+
+    let status = StdCommand::new(&config.git_path)
+        .current_dir(&sandbox_path)
+        .args(["reset", "--hard", &user_branch_commit.to_string()])
+        .status()
+        .context("Failed to reset sandbox to user branch commit")?;
+
+    if !status.success() {
+        bail!("git reset failed in sandbox");
+    }
+
+    let mut tree_paths = std::collections::HashSet::new();
+    restore_collect_tree_paths(repo, shadow_tree.id, PathBuf::new(), &mut tree_paths)?;
+
+    for entry in jwalk::WalkDir::new(session_folder)
+        .skip_hidden(false)
+        .process_read_dir(|_depth, _path, _state, children| {
+            children.retain(|entry| {
+                entry.as_ref().map_or(true, |dir_entry| {
+                    dir_entry.file_name != std::ffi::OsStr::new(".git")
+                })
+            });
+        })
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        let path = entry.path();
+        if entry.file_type().is_dir() {
+            continue;
+        }
+        if let Ok(rel_path) = path.strip_prefix(session_folder) {
+            if !tree_paths.contains(rel_path) {
+                std::fs::remove_file(&path)?;
+            }
+        }
+    }
+
+    restore_checkout_tree_to_disk(repo, shadow_tree.id, &PathBuf::new(), session_folder)?;
+
+    let index_blob_path = Path::new("_/index");
+    if let Some(index_entry) = shadow_tree.lookup_entry_by_path(index_blob_path)? {
+        let index_blob = repo.find_object(index_entry.object_id())?.try_into_blob()?;
+        let sandbox_repo = gix::open(&sandbox_path)?;
+        let index_path = sandbox_repo.path().join("index");
+        std::fs::write(&index_path, &index_blob.data)?;
+    }
+
+    let branch_name = format!("{}{}", config.branch_prefix, session_id);
+    let shadow_branch_ref = format!("refs/heads/{branch_name}");
+    repo.reference(
+        shadow_branch_ref,
+        shadow_commit.id,
+        gix_ref::transaction::PreviousValue::Any,
+        "agt session restore",
+    )?;
+
+    let timestamp_file = repo.common_dir().join("agt/timestamps").join(session_id);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    std::fs::write(&timestamp_file, now.to_string())?;
+
+    println!("Restored session {session_id} to commit {}", shadow_commit.id);
+    println!("  Shadow tree checked out to: {}", session_folder.display());
+    println!("  Sandbox reset to user commit: {user_branch_commit}");
+
+    Ok(())
+}
+
+fn restore_checkout_tree_to_disk(
+    repo: &Repository,
+    tree_id: gix::ObjectId,
+    prefix: &Path,
+    disk_root: &Path,
+) -> Result<()> {
+    use gix::object::tree::EntryKind;
+    use gix_object::TreeRefIter;
+    use gix_path::from_byte_slice;
+
+    let tree = repo.find_object(tree_id)?.try_into_tree()?;
+    for entry in TreeRefIter::from_bytes(&tree.data).filter_map(Result::ok) {
+        let name = from_byte_slice(entry.filename);
+        let entry_path = prefix.join(name);
+        let disk_path = disk_root.join(&entry_path);
+
+        if entry.mode.kind() == EntryKind::Tree {
+            std::fs::create_dir_all(&disk_path)?;
+            restore_checkout_tree_to_disk(repo, entry.oid.to_owned(), &entry_path, disk_root)?;
+        } else if entry.mode.kind() == EntryKind::Link {
+            let blob = repo.find_object(entry.oid)?.try_into_blob()?;
+            let target = String::from_utf8_lossy(&blob.data);
+            if disk_path.exists() || disk_path.is_symlink() {
+                std::fs::remove_file(&disk_path)?;
+            }
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(target.as_ref(), &disk_path)?;
+            #[cfg(not(unix))]
+            std::fs::write(&disk_path, target.as_bytes())?;
+        } else {
+            let blob = repo.find_object(entry.oid)?.try_into_blob()?;
+            if let Some(parent) = disk_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&disk_path, &blob.data)?;
+
+            #[cfg(unix)]
+            if entry.mode.kind() == EntryKind::BlobExecutable {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&disk_path)?.permissions();
+                perms.set_mode(perms.mode() | 0o111);
+                std::fs::set_permissions(&disk_path, perms)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn restore_collect_tree_paths(
+    repo: &Repository,
+    tree_id: gix::ObjectId,
+    prefix: PathBuf,
+    out: &mut std::collections::HashSet<PathBuf>,
+) -> Result<()> {
+    use gix::object::tree::EntryKind;
+    use gix_object::TreeRefIter;
+    use gix_path::from_byte_slice;
+
+    let tree = repo.find_object(tree_id)?.try_into_tree()?;
+    for entry in TreeRefIter::from_bytes(&tree.data).filter_map(Result::ok) {
+        let name = from_byte_slice(entry.filename).to_owned();
+        let mut path = prefix.clone();
+        path.push(name);
+        if entry.mode.kind() == EntryKind::Tree {
+            restore_collect_tree_paths(repo, entry.oid.to_owned(), path, out)?;
+        } else {
+            out.insert(path);
+        }
+    }
     Ok(())
 }
 
