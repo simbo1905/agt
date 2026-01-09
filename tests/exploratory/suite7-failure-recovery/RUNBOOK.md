@@ -1,4 +1,4 @@
-# Suite 8: Failure Recovery
+# Suite 7: Failure Recovery
 
 ## Objective
 
@@ -12,7 +12,7 @@ Test what happens when things go wrong:
 
 ## Working Directory
 
-`.tmp/suite8`
+`.tmp/suite7`
 
 ## Setup
 
