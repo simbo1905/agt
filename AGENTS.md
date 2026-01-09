@@ -1,5 +1,12 @@
 # AGENTS.md - Guidance for AI Coding Agents
 
+You MAY backup files and take them out of the src try by performing a `mv x .tmp/`.
+You MUST NOT reset state using git. 
+You MUST NOT rm files that are not in git (see the you MAY mv files rule).
+You MAY use `git rm` of a file that is committe but you MUST NOT force delete a file from the index.
+You SHOUlD not assume you are the only person or agent making edits.
+You MUST understand that `tidyup` or `get rid of` said by the user means move out of the source tree into .tmp.
+
 This document provides guidance for AI coding agents working on the AGT monorepo.
 
 ## Repository Overview
