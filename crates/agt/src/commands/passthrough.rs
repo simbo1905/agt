@@ -44,11 +44,18 @@ pub fn run(
     let cmd_name = args.first().map(String::as_str).unwrap_or("");
 
     // Spawn git with stdout piped for filtering, stderr inherited
-    let mut child = Command::new(&git_binary)
-        .args(args)
+    // Preserve full environment to ensure git helpers (e.g., git-xxx) are found
+    let mut cmd = Command::new(&git_binary);
+    cmd.args(args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()?;
+        .stderr(Stdio::inherit());
+
+    // Ensure PATH is inherited for git helper delegation (Issue #12)
+    if let Ok(path) = std::env::var("PATH") {
+        cmd.env("PATH", path);
+    }
+
+    let mut child = cmd.spawn()?;
 
     let stdout = child.stdout.take().unwrap();
     let reader = BufReader::new(stdout);
