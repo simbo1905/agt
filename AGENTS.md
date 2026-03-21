@@ -25,6 +25,8 @@ This is a polyglot monorepo containing tools for AI agent session management. To
 - If a dependency is tiny and MIT-licensed, ask whether the user prefers copying the code into the repo instead of adding a new dependency.
 - When inlining third-party MIT code, add a short source/license comment above the copied code in the style already used in this repo.
 - When inlining third-party MIT code, add a matching notice block to the bottom of the root `LICENSE` file.
+- Test-only dependencies should be kept below the fold in `Cargo.toml` and are not candidates for inlining.
+- Avoid npm-like dependency sprawl; every dependency that ships in the final binary must carry its own weight as a first-class part of the tool.
 
 ## Project Structure
 
