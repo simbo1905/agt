@@ -142,10 +142,21 @@ This is a polyglot monorepo managed with mise. Currently includes:
 
 - **Rust** - Core `agt` tool (crates/agt) and sandbox helper (crates/agt-worktree)
 
+### Rust Version (MSRV)
+
+AGT tracks **Debian Trixie (13) official APT** for its Rust version. Currently: **Rust 1.85** (released Feb 2025, supported until 2027).
+
+When Debian Trixie reaches end-of-support, we will adopt the next LTS release's official Rust version. This ensures AGT users on stable Debian distributions can build from source without external toolchains.
+
+To verify your system's Rust version:
+```bash
+rustc --version
+```
+
 ### Prerequisites
 
 - [mise](https://mise.jdx.dev/) for tool management
-- Rust toolchain (managed via mise)
+- Rust toolchain (managed via mise) — **minimum version: 1.85**
 
 ### Building
 
