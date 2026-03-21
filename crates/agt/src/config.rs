@@ -72,10 +72,13 @@ impl AgtConfig {
     }
 }
 
-// This home-directory lookup is inspired by the behavior documented by the
-// `dirs` crate (<https://crates.io/crates/dirs>), which is licensed under
-// MIT OR Apache-2.0. AGT incorporates this small adaptation under MIT while
-// avoiding the external dependency for this single use.
+// This home-directory lookup is adapted from the behavior documented by the
+// `dirs` crate: <https://crates.io/crates/dirs>
+// Repository: <https://github.com/soc/dirs-rs>
+// Original copyright: Copyright (c) 2018-2019 dirs-rs contributors
+// License used here: MIT
+// Modified from original to inline only the tiny home-directory logic AGT uses.
+// See the root LICENSE file for the full third-party notice.
 fn home_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {

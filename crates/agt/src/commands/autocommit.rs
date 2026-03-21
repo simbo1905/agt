@@ -250,14 +250,7 @@ fn build_tree_from_delta(
                     .into_bytes(),
             )
         } else {
-            let mut kind = EntryKind::Blob;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if metadata.permissions().mode() & 0o111 != 0 {
-                    kind = EntryKind::BlobExecutable;
-                }
-            }
+            let kind = executable_entry_kind(&metadata);
             let data = std::fs::read(fs_path)
                 .with_context(|| format!("Failed to read {}", fs_path.display()))?;
             (kind, data)
@@ -279,6 +272,24 @@ fn path_for_tree(path: &Path) -> String {
         buf.push_str(&component.as_os_str().to_string_lossy());
     }
     buf
+}
+
+fn executable_entry_kind(metadata: &std::fs::Metadata) -> EntryKind {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 != 0 {
+            EntryKind::BlobExecutable
+        } else {
+            EntryKind::Blob
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        EntryKind::Blob
+    }
 }
 
 fn collect_tree_paths(
@@ -317,6 +328,10 @@ mod tests {
     fn init_repo() -> Result<TempDir> {
         let tmp = TempDir::new()?;
         let repo = gix::init(tmp.path())?;
+        fs::write(
+            repo.git_dir().join("config"),
+            "[user]\n\tname = Test User\n\temail = test@example.com\n",
+        )?;
 
         fs::write(tmp.path().join("a.txt"), "a")?;
         fs::create_dir_all(tmp.path().join("dir"))?;

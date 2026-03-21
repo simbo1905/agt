@@ -20,6 +20,12 @@ This is a polyglot monorepo containing tools for AI agent session management. To
 - The documentation (especially `README.md` and `docs/agt.1.txt`) must always describe the target/final state, not the previous state.
 - During reviews, do not rely on or keep any documentation other than the final state; the PR must be merged with the README that served as the specification for the work done.
 
+## Small MIT Dependencies
+
+- If a dependency is tiny and MIT-licensed, ask whether the user prefers copying the code into the repo instead of adding a new dependency.
+- When inlining third-party MIT code, add a short source/license comment above the copied code in the style already used in this repo.
+- When inlining third-party MIT code, add a matching notice block to the bottom of the root `LICENSE` file.
+
 ## Project Structure
 
 ```

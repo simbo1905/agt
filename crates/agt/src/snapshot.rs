@@ -50,14 +50,21 @@ enum RecordKind {
 }
 
 // Portions of `PlatformFileId` and `get_file_id()` are adapted from the
-// `file-id` crate by Proc and contributors: <https://crates.io/crates/file-id>.
-// That crate is dual-licensed under MIT OR Apache-2.0. AGT incorporates this
-// adaptation under the MIT terms to avoid carrying the external dependency for
-// the small Unix-only functionality used here.
+// `file-id` crate: <https://crates.io/crates/file-id>
+// Repository: <https://github.com/notify-rs/notify>
+// Original copyright: Copyright (c) 2023 Notify Contributors
+// License used here: MIT
+// Modified from original to inline the small cross-platform file identity logic.
+// See the root LICENSE file for the full third-party notice.
+#[cfg(target_family = "unix")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum PlatformFileId {
     Inode { device_id: u64, inode_number: u64 },
 }
+
+#[cfg(target_family = "windows")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct PlatformFileId;
 
 pub fn save(
     repo: &Repository,
@@ -839,6 +846,7 @@ fn is_executable(metadata: &Metadata) -> bool {
     }
     #[cfg(not(unix))]
     {
+        let _ = metadata;
         false
     }
 }
@@ -851,6 +859,7 @@ fn metadata_change_time_ns(metadata: &Metadata) -> Option<i128> {
     }
     #[cfg(not(unix))]
     {
+        let _ = metadata;
         None
     }
 }
