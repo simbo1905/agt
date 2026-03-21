@@ -22,7 +22,9 @@ fn agt_cmd_with_git() -> Result<AgtCommand, Box<dyn std::error::Error>> {
 }
 
 fn git_mode_cmd(tmp: &TempDir) -> Result<AgtCommand, Box<dyn std::error::Error>> {
-    let git_path = tmp.path().join("git");
+    let git_path = tmp
+        .path()
+        .join(format!("git{}", std::env::consts::EXE_SUFFIX));
     if !git_path.exists() {
         fs::copy(agt_bin(), &git_path)?;
         #[cfg(unix)]
@@ -75,7 +77,6 @@ fn test_clone_creates_repo_layout() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a local bare repo to clone from
     let source = tmp.path().join("source");
-    fs::create_dir_all(&source)?;
     init_bare_repo_with_commit(&source)?;
 
     let target = tmp.path().join("target");
@@ -474,7 +475,6 @@ fn test_clone_sets_default_config() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = TempDir::new()?;
 
     let source = tmp.path().join("source");
-    fs::create_dir_all(&source)?;
     init_bare_repo_with_commit(&source)?;
 
     let target = tmp.path().join("target");
@@ -811,7 +811,6 @@ impl TestRepo {
 fn setup_basic_repo() -> Result<TestRepo, Box<dyn std::error::Error>> {
     let tmp = TempDir::new()?;
     let bare = tmp.path().join("repo.git");
-    fs::create_dir_all(&bare)?;
     init_bare_repo_with_commit(&bare)?;
 
     let root = tmp.path().to_path_buf();
@@ -873,6 +872,9 @@ fn setup_repo_with_shadow_branch() -> Result<TestRepo, Box<dyn std::error::Error
 }
 
 fn init_bare_repo_with_commit(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let repo = gix::ThreadSafeRepository::init(
         path,
         gix::create::Kind::Bare,
@@ -1021,16 +1023,35 @@ fn find_real_git() -> Result<PathBuf, Box<dyn std::error::Error>> {
         }
     }
 
-    // Find git in PATH
-    let output = Command::new("which").arg("git").output()?;
+    #[cfg(windows)]
+    {
+        let output = Command::new("where.exe").arg("git.exe").output()?;
+        if output.status.success() {
+            if let Some(path) = String::from_utf8(output.stdout)?
+                .lines()
+                .find(|line| !line.trim().is_empty())
+            {
+                return Ok(PathBuf::from(path.trim()));
+            }
+        }
+    }
 
-    if output.status.success() {
-        let path = String::from_utf8(output.stdout)?.trim().to_string();
-        return Ok(PathBuf::from(path));
+    #[cfg(not(windows))]
+    {
+        let output = Command::new("which").arg("git").output()?;
+
+        if output.status.success() {
+            let path = String::from_utf8(output.stdout)?.trim().to_string();
+            return Ok(PathBuf::from(path));
+        }
     }
 
     // Fallback locations
     for path in [
+        #[cfg(windows)]
+        "C:/Program Files/Git/bin/git.exe",
+        #[cfg(windows)]
+        "C:/Program Files/Git/cmd/git.exe",
         "/usr/bin/git",
         "/usr/local/bin/git",
         "/opt/homebrew/bin/git",
@@ -1441,7 +1462,6 @@ fn test_export_pushes_user_branch() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = TempDir::new()?;
 
     let remote_bare = tmp.path().join("remote.git");
-    fs::create_dir_all(&remote_bare)?;
     init_bare_repo_with_commit(&remote_bare)?;
 
     let local = tmp.path().join("local");

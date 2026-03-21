@@ -2,6 +2,7 @@ use crate::cli::SessionCommands;
 use crate::config::AgtConfig;
 use crate::gix_cli::{find_worktree_binary, repo_base_path};
 use crate::isolation::SessionPaths;
+use crate::path_util;
 use anyhow::{bail, Context, Result};
 use gix::Repository;
 use gix_ref::transaction::PreviousValue;
@@ -118,8 +119,7 @@ fn create_session(
     let metadata = SessionMetadata {
         session_id: session_id.to_string(),
         branch: branch_name.clone(),
-        sandbox: std::fs::canonicalize(&paths.sandbox)
-            .unwrap_or_else(|_| paths.sandbox.clone())
+        sandbox: path_util::canonicalize_or_original(&paths.sandbox)
             .display()
             .to_string(),
         from: start_commit.id.to_string(),
@@ -154,7 +154,7 @@ fn export_session(
         None => infer_session_from_cwd(repo)?,
     };
 
-    let sandbox_path = PathBuf::from(&metadata.sandbox);
+    let sandbox_path = path_util::canonicalize_or_original(Path::new(&metadata.sandbox));
     if !sandbox_path.exists() {
         bail!("Sandbox not found: {}", sandbox_path.display());
     }
@@ -194,7 +194,7 @@ fn restore_session(
     commit_spec: &str,
 ) -> Result<()> {
     let metadata = load_metadata(repo, session_id)?;
-    let sandbox_path = PathBuf::from(&metadata.sandbox);
+    let sandbox_path = path_util::canonicalize_or_original(Path::new(&metadata.sandbox));
 
     let session_folder = sandbox_path
         .parent()
@@ -453,10 +453,9 @@ fn load_metadata(repo: &Repository, session_id: &str) -> Result<SessionMetadata>
 }
 
 fn infer_session_from_cwd(repo: &Repository) -> Result<(String, SessionMetadata)> {
-    let cwd = std::env::current_dir()
-        .context("Failed to determine current directory")?
-        .canonicalize()
-        .context("Failed to canonicalize current directory")?;
+    let cwd = path_util::canonicalize(
+        &std::env::current_dir().context("Failed to determine current directory")?,
+    )?;
 
     let sessions_dir = repo.common_dir().join("agt/sessions");
     for entry in std::fs::read_dir(&sessions_dir)
@@ -475,7 +474,7 @@ fn infer_session_from_cwd(repo: &Repository) -> Result<(String, SessionMetadata)
         if let Ok(meta) = load_metadata(repo, &session_id) {
             let sandbox = PathBuf::from(&meta.sandbox);
             if sandbox.exists() {
-                let sandbox = sandbox.canonicalize().unwrap_or_else(|_| sandbox.clone());
+                let sandbox = path_util::canonicalize_or_original(&sandbox);
                 if cwd == sandbox || cwd.starts_with(&sandbox) {
                     return Ok((session_id, meta));
                 }
@@ -494,8 +493,7 @@ fn repo_root(repo: &Repository) -> Result<PathBuf> {
         .context("Repository has no working directory")?;
 
     // Canonicalize to handle relative paths
-    let work_dir = std::fs::canonicalize(work_dir)
-        .with_context(|| format!("Failed to canonicalize work dir: {}", work_dir.display()))?;
+    let work_dir = path_util::canonicalize(work_dir)?;
 
     work_dir
         .parent()

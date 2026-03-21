@@ -7,6 +7,7 @@ mod config;
 mod filter;
 mod gix_cli;
 mod isolation;
+mod path_util;
 mod scanner;
 mod snapshot;
 

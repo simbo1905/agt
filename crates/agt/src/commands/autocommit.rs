@@ -1,4 +1,5 @@
 use crate::config::AgtConfig;
+use crate::path_util;
 use anyhow::{Context, Result};
 use gix::object::tree::EntryKind;
 use gix::Repository;
@@ -58,7 +59,7 @@ pub fn run(
             anyhow::bail!("Sandbox does not exist: {}", sandbox_path.display());
         }
     }
-    sandbox_path = std::fs::canonicalize(&sandbox_path)?;
+    sandbox_path = path_util::canonicalize(&sandbox_path)?;
 
     // Session folder is parent of sandbox
     let session_folder = sandbox_path

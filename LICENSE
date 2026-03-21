@@ -35,3 +35,9 @@ https://crates.io/crates/dirs
 https://github.com/soc/dirs-rs
 MIT License
 Copyright (c) 2018-2019 dirs-rs contributors
+
+This project includes code from dunce:
+https://crates.io/crates/dunce
+https://gitlab.com/kornelski/dunce
+MIT No Attribution License (MIT-0)
+The original crate is available under CC0-1.0 OR MIT-0 OR Apache-2.0.

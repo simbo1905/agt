@@ -11,7 +11,20 @@ pub fn find_git_binary() -> Result<PathBuf> {
         }
     }
 
-    // 2. Search PATH using `which git`
+    // 2. Search PATH
+    #[cfg(windows)]
+    if let Ok(output) = Command::new("where.exe").arg("git.exe").output() {
+        if output.status.success() {
+            if let Some(path) = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .find(|line| !line.trim().is_empty())
+            {
+                return Ok(PathBuf::from(path.trim()));
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
     if let Ok(output) = Command::new("which").arg("git").output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -23,6 +36,10 @@ pub fn find_git_binary() -> Result<PathBuf> {
 
     // 3. Fallback to common locations
     let fallbacks = [
+        #[cfg(windows)]
+        "C:/Program Files/Git/bin/git.exe",
+        #[cfg(windows)]
+        "C:/Program Files/Git/cmd/git.exe",
         "/usr/bin/git",
         "/usr/local/bin/git",
         "/opt/homebrew/bin/git",

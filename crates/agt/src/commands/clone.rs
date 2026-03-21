@@ -1,4 +1,5 @@
 use crate::config::AgtConfig;
+use crate::path_util;
 use anyhow::{Context, Result};
 use gix_features::progress::Discard;
 use gix_fs::Capabilities;
@@ -14,7 +15,6 @@ pub fn run(remote_url: &str, target_path: Option<&Path>, config: &AgtConfig) -> 
     let main_path = repo_root.join("main");
 
     std::fs::create_dir_all(&repo_root)?;
-    std::fs::create_dir_all(&bare_path)?;
 
     // 2. Clone as bare into .bare/
     let (checkout, _outcome) = gix::clone::PrepareFetch::new(
@@ -72,14 +72,14 @@ fn setup_main_worktree(bare_path: &Path, work_path: &Path, name: &str) -> Result
     };
 
     // Write worktree metadata
-    let admin_dir_abs = std::fs::canonicalize(&admin_dir)?;
+    let admin_dir_abs = path_util::canonicalize(&admin_dir)?;
     let worktree_git = work_path.join(".git");
     std::fs::write(
         &worktree_git,
         format!("gitdir: {}\n", admin_dir_abs.display()),
     )?;
 
-    let worktree_git_abs = std::fs::canonicalize(&worktree_git)?;
+    let worktree_git_abs = path_util::canonicalize(&worktree_git)?;
     std::fs::write(
         admin_dir.join("gitdir"),
         format!("{}\n", worktree_git_abs.display()),
@@ -153,14 +153,17 @@ fn write_agt_config(agt_dir: &Path, config: &AgtConfig) -> Result<()> {
 }
 
 fn extract_repo_name(url: &str) -> Result<String> {
-    let mut name = url
-        .trim_end_matches(".git")
-        .split('/')
-        .next_back()
-        .context("Failed to extract repository name from URL")?
-        .to_string();
+    let trimmed = url.trim_end_matches(['/', '\\']).trim_end_matches(".git");
+
+    let mut name = std::path::Path::new(trimmed)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .or_else(|| trimmed.split('/').next_back().map(ToOwned::to_owned))
+        .context("Failed to extract repository name from URL")?;
 
     name = name.trim_end_matches('/').to_string();
+    name = name.trim_end_matches('\\').to_string();
 
     if name.is_empty() {
         return Err(anyhow::anyhow!("Invalid repository URL"));
