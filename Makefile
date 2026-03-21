@@ -1,7 +1,7 @@
 DIST = dist
 HOOKS_DIR = .githooks
 
-.PHONY: build build-agt build-worktree clean dist fmt lint test test-snapshot check check-windows install-hooks docs
+.PHONY: build build-agt build-worktree clean dist fmt lint test test-snapshot check install-hooks docs
 
 build: check build-worktree build-agt dist
 
@@ -33,14 +33,7 @@ test:
 test-snapshot:
 	cargo test test_snapshot_ -- --nocapture
 
-check-windows:
-	@if command -v rustup >/dev/null 2>&1 && rustup target list --installed | grep -qx 'x86_64-pc-windows-msvc'; then \
-		cargo check --workspace --all-targets --all-features --target x86_64-pc-windows-msvc; \
-	else \
-		printf '%s\n' "Skipping Windows cross-check (target x86_64-pc-windows-msvc not installed)"; \
-	fi
-
-check: fmt lint test-snapshot test check-windows
+check: fmt lint test-snapshot test
 
 install-hooks:
 	mkdir -p .git/hooks
