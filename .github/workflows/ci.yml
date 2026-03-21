@@ -6,6 +6,12 @@ on:
     branches:
       - '**'
 
+env:
+  GIT_AUTHOR_NAME: AGT CI
+  GIT_AUTHOR_EMAIL: agt-ci@example.invalid
+  GIT_COMMITTER_NAME: AGT CI
+  GIT_COMMITTER_EMAIL: agt-ci@example.invalid
+
 jobs:
   macos:
     name: macOS

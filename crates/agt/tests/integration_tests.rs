@@ -2,6 +2,7 @@ use assert_cmd::Command as AgtCommand;
 use gix::commit::NO_PARENT_IDS;
 use gix::object::tree::EntryKind;
 use gix_object::Tree;
+#[cfg(unix)]
 use predicates::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -114,6 +115,7 @@ fn test_clone_creates_repo_layout() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
 fn test_snapshot_save_creates_store_and_includes_gitignored_files(
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -149,6 +151,7 @@ fn test_snapshot_save_creates_store_and_includes_gitignored_files(
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
 fn test_snapshot_save_warns_when_store_is_not_gitignored() -> Result<(), Box<dyn std::error::Error>>
 {
@@ -166,6 +169,7 @@ fn test_snapshot_save_warns_when_store_is_not_gitignored() -> Result<(), Box<dyn
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
 fn test_snapshot_check_reports_changes_between_snapshots() -> Result<(), Box<dyn std::error::Error>>
 {
@@ -205,6 +209,7 @@ fn test_snapshot_check_reports_changes_between_snapshots() -> Result<(), Box<dyn
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
 fn test_snapshot_restore_restores_prior_state() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_basic_repo()?;
@@ -244,6 +249,7 @@ fn test_snapshot_restore_restores_prior_state() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
 fn test_snapshot_restore_requires_clean_latest_snapshot_backup(
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -271,6 +277,7 @@ fn test_snapshot_restore_requires_clean_latest_snapshot_backup(
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
 fn test_snapshot_restore_can_restore_multiple_paths_without_fresh_backup(
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -315,6 +322,7 @@ fn test_snapshot_restore_can_restore_multiple_paths_without_fresh_backup(
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
 fn test_snapshot_targeted_restore_prompts_before_clobbering(
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -373,6 +381,7 @@ fn test_snapshot_targeted_restore_prompts_before_clobbering(
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
 fn test_snapshot_status_reports_clean_and_changed() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_basic_repo()?;
@@ -405,6 +414,7 @@ fn test_snapshot_status_reports_clean_and_changed() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
 fn test_snapshot_status_double_quiet_uses_exit_code() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_basic_repo()?;
@@ -437,6 +447,7 @@ fn test_snapshot_status_double_quiet_uses_exit_code() -> Result<(), Box<dyn std:
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
 fn test_snapshot_save_honors_env_store_override() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_basic_repo()?;
@@ -1033,6 +1044,7 @@ fn find_real_git() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Err("Could not find git binary".into())
 }
 
+#[cfg(unix)]
 fn parse_snapshot_tag(stdout: &str) -> String {
     stdout
         .lines()
