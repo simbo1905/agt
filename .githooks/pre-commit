@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+for git_var in $(git rev-parse --local-env-vars); do
+    unset "$git_var"
+done
+
+printf '%s\n' "Running AGT pre-commit safety checks..."
+make check

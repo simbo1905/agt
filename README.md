@@ -4,10 +4,11 @@ A polyglot monorepo for AI agent tooling, using [mise](https://mise.jdx.dev/) fo
 
 ## Overview
 
-This repository contains tools for managing AI agent coding sessions with immutable filesystem snapshots and time-travel capabilities. The primary tool is `agt` (Agent Git Tool), a Git wrapper that enables:
+This repository contains tools for managing AI agent coding sessions, shadow-history capture, and standalone filesystem snapshots. The primary tool is `agt` (Agent Git Tool), a Git wrapper that enables:
 
 - **Parallel agent workflows** - Multiple AI agents work concurrently in isolated worktrees
-- **Immutable history** - Every file modification is captured in the Git object store
+- **Session shadow history** - Agent session state is captured on local shadow branches
+- **Standalone snapshots** - Tripwire/AIDE-like save/check/status/restore workflows for arbitrary trees, including `.gitignore` output
 - **Sandboxing Infrastructure** - Support for robust isolation via chroot jails (using [toybox](https://github.com/landley/toybox)) and VM/VPS environments
 - **Time travel** - Roll back to any point in agent history, fork from any state
 - **Transparent user experience** - When invoked as `git`, agent branches are hidden
@@ -56,9 +57,22 @@ Key commands:
 - `agt session new [--id <id>]` - Create new agent session
 - `agt session export` - Push user branch to remote origin
 - `agt session remove --id <id>` - Remove a session
-- `agt autocommit --session-id <id>` - Snapshot session state
+- `agt autocommit --session-id <id>` - Capture session shadow history
+- `agt snapshot save` - Save a standalone filesystem snapshot into an isolated store
+- `agt snapshot check` - Compare two standalone snapshots
+- `agt snapshot status` - Compare the current tree against the latest standalone snapshot
+- `agt snapshot restore` - Restore all or part of a saved standalone snapshot
 
 See [docs/agt.1.txt](docs/agt.1.txt) for the complete man page.
+
+### Two Snapshot Modes
+
+AGT now uses the word "snapshot" in two different namespaces:
+
+- **Session shadow snapshots** come from `agt autocommit` and are tied to `sessions/<id>/` plus `agtsessions/*` shadow branches.
+- **Standalone snapshots** come from `agt snapshot ...` and live in a separate snapshot store, defaulting to `.agt-snapshots/` in the current working directory.
+
+Standalone snapshots are designed for answering "what changed?" across generated output and ignored files without interfering with normal Git history or AGT session flows.
 
 ## Configuration
 
@@ -114,6 +128,12 @@ agt autocommit -C sessions/agent-001 --session-id agent-001
 
 # Export user branch to remote
 agt session export --session-id agent-001
+
+# Save a standalone snapshot before running an agent
+agt snapshot save -m "before run"
+
+# Ask if anything changed since the latest standalone snapshot
+agt snapshot status -q
 ```
 
 ## Development
@@ -238,6 +258,7 @@ This gives full git compatibility while hiding agent implementation details from
 ## Environment Variables
 
 - `AGT_GIT_PATH` - Override `agt.gitPath` configuration
+- `AGT_SNAPSHOT_STORE` - Override the standalone snapshot store location
 - `AGT_WORKTREE_PATH` - Override location of `agt-worktree` binary
 - `AGT_DISABLE_FILTER` - Set to "1" to disable filtering in git mode
 - `AGT_DEBUG` - Set to "1" for debug output

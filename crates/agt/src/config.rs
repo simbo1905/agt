@@ -25,7 +25,7 @@ impl AgtConfig {
         let mut config = Self::default();
 
         // Read global config first: ~/.agtconfig
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home_dir() {
             let global_path = home.join(".agtconfig");
             if global_path.exists() {
                 let global_settings = parse_ini_file(&global_path)?;
@@ -54,7 +54,7 @@ impl AgtConfig {
         let mut config = Self::default();
 
         // For init, only read global config (repo doesn't exist yet)
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home_dir() {
             let global_path = home.join(".agtconfig");
             if global_path.exists() {
                 if let Ok(global_settings) = parse_ini_file(&global_path) {
@@ -69,6 +69,37 @@ impl AgtConfig {
         }
 
         config
+    }
+}
+
+// This home-directory lookup is inspired by the behavior documented by the
+// `dirs` crate (<https://crates.io/crates/dirs>), which is licensed under
+// MIT OR Apache-2.0. AGT incorporates this small adaptation under MIT while
+// avoiding the external dependency for this single use.
+fn home_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("USERPROFILE")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                let drive = std::env::var_os("HOMEDRIVE")?;
+                let path = std::env::var_os("HOMEPATH")?;
+                if drive.is_empty() || path.is_empty() {
+                    None
+                } else {
+                    let mut home = PathBuf::from(drive);
+                    home.push(path);
+                    Some(home)
+                }
+            })
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
     }
 }
 

@@ -1,3 +1,4 @@
+use clap::ArgAction;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -53,8 +54,67 @@ pub enum Commands {
         siblings: Option<Vec<String>>,
     },
 
+    /// Snapshot commands for generated output and restore
+    #[command(subcommand)]
+    Snapshot(SnapshotCommands),
+
     /// Show agt-specific status
     Status,
+}
+
+#[derive(Subcommand, Clone)]
+pub enum SnapshotCommands {
+    /// Save a filesystem snapshot into the snapshot store
+    Save {
+        /// Directory to scan
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        /// Override snapshot store location
+        #[arg(long)]
+        store: Option<PathBuf>,
+        /// Message stored with the snapshot tag
+        #[arg(short = 'm', long)]
+        message: Option<String>,
+    },
+
+    /// Compare two saved snapshots
+    Check {
+        /// Earlier snapshot tag name
+        #[arg(long)]
+        before: String,
+        /// Later snapshot tag name
+        #[arg(long)]
+        after: String,
+        /// Override snapshot store location
+        #[arg(long)]
+        store: Option<PathBuf>,
+    },
+
+    /// Compare the current filesystem state against the latest snapshot
+    Status {
+        /// Override snapshot store location
+        #[arg(long)]
+        store: Option<PathBuf>,
+        /// Reduce output; repeat for no output and exit status only
+        #[arg(short = 'q', action = ArgAction::Count)]
+        quiet: u8,
+    },
+
+    /// Restore files from a saved snapshot
+    Restore {
+        /// Snapshot tag name to restore from
+        #[arg(long)]
+        snapshot: String,
+        /// Directory to restore into
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        /// Restore only selected paths within the snapshot
+        #[arg(long)]
+        path: Vec<PathBuf>,
+        /// Override snapshot store location
+        #[arg(long)]
+        store: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Clone)]

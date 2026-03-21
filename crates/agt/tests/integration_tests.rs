@@ -2,6 +2,7 @@ use assert_cmd::Command as AgtCommand;
 use gix::commit::NO_PARENT_IDS;
 use gix::object::tree::EntryKind;
 use gix_object::Tree;
+use predicates::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -110,6 +111,350 @@ fn test_clone_creates_repo_layout() -> Result<(), Box<dyn std::error::Error>> {
     assert!(bare_repo.join("agt/timestamps").exists());
     assert!(bare_repo.join("agt/sessions").exists());
 
+    Ok(())
+}
+
+#[test]
+fn test_snapshot_save_creates_store_and_includes_gitignored_files(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join(".gitignore"), ".agt-snapshots/\n")?;
+    fs::write(repo.worktree().join("visible.txt"), "visible")?;
+    fs::write(repo.worktree().join("ignored.out"), "ignored")?;
+
+    let output = agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo.worktree())
+        .output()?;
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    let tag = parse_snapshot_tag(&stdout);
+    let store = repo.worktree().join(".agt-snapshots");
+    assert!(store.exists());
+
+    let git_path = find_real_git()?;
+    let show = Command::new(&git_path)
+        .args([
+            "--git-dir",
+            store.to_str().unwrap(),
+            "show",
+            &format!("{tag}:payload/ignored.out"),
+        ])
+        .output()?;
+    assert!(show.status.success());
+    assert_eq!(String::from_utf8(show.stdout)?, "ignored");
+
+    Ok(())
+}
+
+#[test]
+fn test_snapshot_save_warns_when_store_is_not_gitignored() -> Result<(), Box<dyn std::error::Error>>
+{
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join("generated.txt"), "hello")?;
+
+    agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo.worktree())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("not ignored by Git"));
+
+    Ok(())
+}
+
+#[test]
+fn test_snapshot_check_reports_changes_between_snapshots() -> Result<(), Box<dyn std::error::Error>>
+{
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join(".gitignore"), ".agt-snapshots/\n")?;
+    fs::write(repo.worktree().join("tracked.txt"), "one")?;
+
+    let first = agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(first.status.success());
+    let before = parse_snapshot_tag(&String::from_utf8(first.stdout)?);
+
+    fs::write(repo.worktree().join("tracked.txt"), "two")?;
+    fs::write(repo.worktree().join("added.txt"), "added")?;
+    fs::remove_file(repo.worktree().join("README.md"))?;
+
+    let second = agt_cmd_with_git()?
+        .args(["snapshot", "save", "-m", "second snapshot"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(second.status.success());
+    let after = parse_snapshot_tag(&String::from_utf8(second.stdout)?);
+
+    let output = agt_cmd_with_git()?
+        .args(["snapshot", "check", "--before", &before, "--after", &after])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("A added.txt"));
+    assert!(stdout.contains("D README.md"));
+    assert!(stdout.contains("M tracked.txt"));
+
+    Ok(())
+}
+
+#[test]
+fn test_snapshot_restore_restores_prior_state() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join(".gitignore"), ".agt-snapshots/\n")?;
+    fs::write(repo.worktree().join("tracked.txt"), "one")?;
+
+    let first = agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(first.status.success());
+    let snapshot = parse_snapshot_tag(&String::from_utf8(first.stdout)?);
+
+    fs::write(repo.worktree().join("tracked.txt"), "two")?;
+    fs::write(repo.worktree().join("extra.txt"), "extra")?;
+
+    agt_cmd_with_git()?
+        .args(["snapshot", "save", "-m", "backup current state"])
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    agt_cmd_with_git()?
+        .args(["snapshot", "restore", "--snapshot", &snapshot])
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(repo.worktree().join("tracked.txt"))?,
+        "one"
+    );
+    assert!(!repo.worktree().join("extra.txt").exists());
+    assert!(repo.worktree().join(".agt-snapshots").exists());
+
+    Ok(())
+}
+
+#[test]
+fn test_snapshot_restore_requires_clean_latest_snapshot_backup(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join(".gitignore"), ".agt-snapshots/\n")?;
+    fs::write(repo.worktree().join("tracked.txt"), "one")?;
+
+    let first = agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(first.status.success());
+    let snapshot = parse_snapshot_tag(&String::from_utf8(first.stdout)?);
+
+    fs::write(repo.worktree().join("tracked.txt"), "two")?;
+
+    agt_cmd_with_git()?
+        .args(["snapshot", "restore", "--snapshot", &snapshot])
+        .current_dir(repo.worktree())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("latest snapshot"));
+
+    Ok(())
+}
+
+#[test]
+fn test_snapshot_restore_can_restore_multiple_paths_without_fresh_backup(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join(".gitignore"), ".agt-snapshots/\n")?;
+    fs::create_dir_all(repo.worktree().join("dist/cache"))?;
+    fs::write(repo.worktree().join("lost-a.txt"), "a")?;
+    fs::write(repo.worktree().join("dist/cache/output.bin"), "bin")?;
+
+    let first = agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(first.status.success());
+    let snapshot = parse_snapshot_tag(&String::from_utf8(first.stdout)?);
+
+    fs::remove_file(repo.worktree().join("lost-a.txt"))?;
+    fs::remove_file(repo.worktree().join("dist/cache/output.bin"))?;
+
+    agt_cmd_with_git()?
+        .args([
+            "snapshot",
+            "restore",
+            "--snapshot",
+            &snapshot,
+            "--path",
+            "lost-a.txt",
+            "--path",
+            "dist/cache",
+        ])
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    assert_eq!(fs::read_to_string(repo.worktree().join("lost-a.txt"))?, "a");
+    assert_eq!(
+        fs::read_to_string(repo.worktree().join("dist/cache/output.bin"))?,
+        "bin"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_snapshot_targeted_restore_prompts_before_clobbering(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join(".gitignore"), ".agt-snapshots/\n")?;
+    fs::write(repo.worktree().join("tracked.txt"), "one")?;
+
+    let first = agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(first.status.success());
+    let snapshot = parse_snapshot_tag(&String::from_utf8(first.stdout)?);
+
+    fs::write(repo.worktree().join("tracked.txt"), "two")?;
+
+    agt_cmd_with_git()?
+        .args([
+            "snapshot",
+            "restore",
+            "--snapshot",
+            &snapshot,
+            "--path",
+            "tracked.txt",
+        ])
+        .write_stdin("n\n")
+        .current_dir(repo.worktree())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Overwrite"));
+
+    assert_eq!(
+        fs::read_to_string(repo.worktree().join("tracked.txt"))?,
+        "two"
+    );
+
+    agt_cmd_with_git()?
+        .args([
+            "snapshot",
+            "restore",
+            "--snapshot",
+            &snapshot,
+            "--path",
+            "tracked.txt",
+        ])
+        .write_stdin("y\n")
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(repo.worktree().join("tracked.txt"))?,
+        "one"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_snapshot_status_reports_clean_and_changed() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join(".gitignore"), ".agt-snapshots/\n")?;
+    fs::write(repo.worktree().join("tracked.txt"), "one")?;
+
+    agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    agt_cmd_with_git()?
+        .args(["snapshot", "status", "-q"])
+        .current_dir(repo.worktree())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("clean"));
+
+    fs::write(repo.worktree().join("tracked.txt"), "two")?;
+
+    agt_cmd_with_git()?
+        .args(["snapshot", "status", "-q"])
+        .current_dir(repo.worktree())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("changed"));
+
+    Ok(())
+}
+
+#[test]
+fn test_snapshot_status_double_quiet_uses_exit_code() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join(".gitignore"), ".agt-snapshots/\n")?;
+    fs::write(repo.worktree().join("tracked.txt"), "one")?;
+
+    agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    agt_cmd_with_git()?
+        .args(["snapshot", "status", "-q", "-q"])
+        .current_dir(repo.worktree())
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+
+    fs::write(repo.worktree().join("tracked.txt"), "two")?;
+
+    agt_cmd_with_git()?
+        .args(["snapshot", "status", "-q", "-q"])
+        .current_dir(repo.worktree())
+        .assert()
+        .failure()
+        .stdout(predicate::str::is_empty());
+
+    Ok(())
+}
+
+#[test]
+fn test_snapshot_save_honors_env_store_override() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    let custom_store = repo.repo_root().join("custom-snapshots.git");
+    fs::write(
+        repo.worktree().join(".gitignore"),
+        "../custom-snapshots.git\n",
+    )?;
+
+    agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .env("AGT_SNAPSHOT_STORE", &custom_store)
+        .current_dir(repo.worktree())
+        .assert()
+        .success();
+
+    assert!(custom_store.exists());
     Ok(())
 }
 
@@ -688,6 +1033,15 @@ fn find_real_git() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Err("Could not find git binary".into())
 }
 
+fn parse_snapshot_tag(stdout: &str) -> String {
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("Saved snapshot "))
+        .map(str::trim)
+        .map(ToOwned::to_owned)
+        .expect("snapshot save output should include tag")
+}
+
 fn ensure_worktree_tool() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let root = repo_root();
     let exe_suffix = std::env::consts::EXE_SUFFIX;
@@ -755,7 +1109,10 @@ fn test_restore_resets_sandbox_to_shadow_commit() -> Result<(), Box<dyn std::err
         .success();
 
     assert!(sandbox_path.join("file-b.txt").exists());
-    assert_eq!(fs::read_to_string(sandbox_path.join("file-a.txt"))?, "version 2");
+    assert_eq!(
+        fs::read_to_string(sandbox_path.join("file-a.txt"))?,
+        "version 2"
+    );
 
     agt_cmd_with_git()?
         .args([
@@ -771,7 +1128,10 @@ fn test_restore_resets_sandbox_to_shadow_commit() -> Result<(), Box<dyn std::err
         .success();
 
     assert!(!sandbox_path.join("file-b.txt").exists());
-    assert_eq!(fs::read_to_string(sandbox_path.join("file-a.txt"))?, "version 1");
+    assert_eq!(
+        fs::read_to_string(sandbox_path.join("file-a.txt"))?,
+        "version 1"
+    );
 
     Ok(())
 }
@@ -837,7 +1197,10 @@ fn test_restore_resets_agent_state_folders() -> Result<(), Box<dyn std::error::E
         fs::read_to_string(config_dir.join("agent.json"))?,
         r#"{"model": "gpt-4"}"#
     );
-    assert_eq!(fs::read_to_string(xdg_dir.join("state.db"))?, "initial state");
+    assert_eq!(
+        fs::read_to_string(xdg_dir.join("state.db"))?,
+        "initial state"
+    );
     assert!(!xdg_dir.join("new-file.txt").exists());
 
     Ok(())

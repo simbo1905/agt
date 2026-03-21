@@ -5,4 +5,5 @@ pub mod list_sessions;
 pub mod passthrough;
 pub mod prune_session;
 pub mod session;
+pub mod snapshot;
 pub mod status;

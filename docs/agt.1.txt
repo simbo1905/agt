@@ -1,7 +1,7 @@
 AGT(1)                           User Commands                          AGT(1)
 
 NAME
-       agt - Agent Git Tool for immutable filesystem snapshots and session management
+       agt - Agent Git Tool for session management and standalone filesystem snapshots
 
 SYNOPSIS
        agt <command> [options]
@@ -9,8 +9,7 @@ SYNOPSIS
 
 DESCRIPTION
        agt is a Git wrapper that provides dual-mode operation for managing AI
-       agent coding sessions with immutable filesystem snapshots and time-travel
-       capabilities.
+       agent coding sessions and standalone filesystem snapshots.
 
        When invoked as 'git', agt spawns the real git binary and filters its
        stdout to hide agent branches, tags, and commits based on configuration.
@@ -18,9 +17,21 @@ DESCRIPTION
        agent management commands are available.
 
        The tool enables parallel agent workflows where multiple AI agents can work
-       concurrently in isolated agt-sandboxes while maintaining a complete, immutable
-       history of all file modifications. Agent branches are kept local and never
-       pushed to remotes, while user branches follow standard Git workflows.
+       concurrently in isolated agt-sandboxes while maintaining session shadow
+       history in Git. In addition, agt can create standalone snapshot repositories
+       for Tripwire/AIDE-like "what changed?" workflows over arbitrary trees,
+       including files ignored by Git.
+
+       There are two distinct snapshot concepts:
+
+       • session shadow snapshots
+              Created by agt autocommit for agent sessions. These snapshot the
+              entire session folder onto agtsessions/* shadow branches.
+
+       • standalone snapshots
+              Created by agt snapshot ... commands. These live in a separate,
+              isolated snapshot store and do not modify the user's normal Git
+              history or index.
 
 DUAL-MODE OPERATION
        git mode (filtered)
@@ -204,19 +215,109 @@ COMMANDS
               Note: Symlinks are stored as symlinks (mode 120000) with their target
                     path captured as-is.
 
+               Options:
+                   -C <path>             Session folder path (required)
+                   --session-id <id>     Session identifier (required)
+                   --timestamp <epoch>   Override scan timestamp (for testing)
+                   --dry-run             Show what would be committed without committing
+
+   SNAPSHOT COMMANDS
+
+       agt snapshot save [--target <path>] [--store <path>] [-m <message>]
+              Create a standalone snapshot of a filesystem tree.
+
+              This command:
+              1. Scans the target tree directly from disk
+              2. Includes files ignored by Git
+              3. Skips the normal repository .git directory and the snapshot store itself
+              4. Writes file contents into a dedicated snapshot object store using Git objects
+              5. Records additional filesystem metadata in a snapshot manifest blob
+              6. Creates an annotated tag named from the Unix epoch of the snapshot
+
+              By default the snapshot store lives in .agt-snapshots/ under the
+              current working directory. The store location can be overridden by
+              --store or AGT_SNAPSHOT_STORE. agt warns if the chosen store path is
+              not ignored by Git.
+
+              The snapshot manifest records, at minimum:
+              • object_id
+              • file_id
+              • parent_file_id
+              • file type and mode
+              • user and group where available
+              • create, modify, and change timestamps where available
+              • platform file flags where available
+
               Options:
-                  -C <path>             Session folder path (required)
-                  --session-id <id>     Session identifier (required)
-                  --timestamp <epoch>   Override scan timestamp (for testing)
-                  --dry-run             Show what would be committed without committing
+                  --target <path>        Directory to snapshot (default: current dir)
+                  --store <path>         Snapshot store directory
+                  -m, --message <text>   Annotated tag message
+
+       agt snapshot check --before <tag> --after <tag> [--store <path>]
+              Compare two saved standalone snapshots and report added, deleted,
+              and modified paths.
+
+              Options:
+                  --before <tag>         Earlier snapshot tag (required)
+                  --after <tag>          Later snapshot tag (required)
+                  --store <path>         Snapshot store directory
+
+       agt snapshot status [-q] [-q] [--store <path>]
+              Compare the current filesystem state against the latest standalone
+              snapshot in the store.
+
+              Default mode reports the full set of added, deleted, and modified
+              paths. Quiet modes change behavior:
+
+              • -q
+                     Print a one-line result: clean or changed.
+
+              • -qq
+                     Print nothing. Exit with status 0 when clean and non-zero
+                     when a mismatch is found.
+
+              In quiet modes agt may stop scanning as soon as it can prove the
+              current tree differs from the latest snapshot.
+
+              Options:
+                  --store <path>         Snapshot store directory
+
+       agt snapshot restore --snapshot <tag> [--target <path>] [--path <path> ...] [--store <path>]
+              Restore files from a saved standalone snapshot.
+
+              Two restore modes are supported:
+
+              • full restore
+                     Restores the whole target tree. This requires the current
+                     filesystem state to match the latest snapshot first, so that
+                     the user has a fresh backup to return to.
+
+              • targeted restore
+                     Restores only the requested paths. This does not require a
+                     fresh backup snapshot first and is intended for recovering
+                     deleted files or folders.
+
+              Safety behavior:
+              • full restore refuses to run unless the latest snapshot is clean
+              • targeted restore prompts before overwriting existing content
+              • restore never uses the normal repository index as its source of truth
+
+              Options:
+                  --snapshot <tag>       Snapshot tag to restore from (required)
+                  --target <path>        Destination tree (default: current dir)
+                  --path <path>          Restore only the given path; repeatable
+                  --store <path>         Snapshot store directory
 
    STATUS COMMAND
 
        agt status [-C <path>]
-              Show agt-specific status including:
-              • Active sessions
-              • Pending autocommits
-              • Configuration summary
+               Show agt-specific status including:
+               • Active sessions
+               • Pending autocommits
+               • Configuration summary
+
+              Note: standalone snapshot status is a separate command namespace:
+              agt snapshot status
 
               Options:
                   -C <path>             Repository path (default: current dir)
@@ -303,11 +404,16 @@ FILES
                      starting commit, and sandbox path.
 
        sessions/<session-id>/
-              Session folder containing:
-              - sandbox/ (agt-sandbox workspace where agent runs)
-              - xdg/ (tool state, XDG_DATA_HOME)
-              - config/ (tool config, XDG_CONFIG_HOME)
-              - _/ (AGT system folder)
+               Session folder containing:
+               - sandbox/ (agt-sandbox workspace where agent runs)
+               - xdg/ (tool state, XDG_DATA_HOME)
+               - config/ (tool config, XDG_CONFIG_HOME)
+               - _/ (AGT system folder)
+
+        .agt-snapshots/
+               Default standalone snapshot store in the current working directory.
+               This is a separate bare Git repository used only for agt snapshot
+               save/check/status/restore operations.
 
 ENVIRONMENT
        AGT_DISABLE_FILTER
@@ -318,7 +424,11 @@ ENVIRONMENT
               If set to "1", enables debug output showing filtering decisions.
 
        AGT_GIT_PATH
-              Override agt.gitPath configuration. Path to the real git binary.
+               Override agt.gitPath configuration. Path to the real git binary.
+
+       AGT_SNAPSHOT_STORE
+               Override the standalone snapshot store location. Equivalent to
+               passing --store to agt snapshot commands.
 
 EXAMPLES
        Clone a remote repository:
@@ -338,8 +448,23 @@ EXAMPLES
               $ cd sessions/agent-001/sandbox
               $ # ... agent modifies files ...
 
-       Auto-commit agent changes:
-              $ agt autocommit -C sessions/agent-001 --session-id agent-001
+        Auto-commit agent changes:
+               $ agt autocommit -C sessions/agent-001 --session-id agent-001
+
+        Save a standalone snapshot of the current tree:
+               $ agt snapshot save -m "before agent run"
+
+        Compare two standalone snapshots:
+               $ agt snapshot check --before 01739800000000000000 --after 01739800001234567890
+
+        Ask whether anything changed since the latest standalone snapshot:
+               $ agt snapshot status -q
+
+        Use exit status only in scripts:
+               $ agt snapshot status -qq
+
+        Restore a deleted folder from a standalone snapshot:
+               $ agt snapshot restore --snapshot 01739800001234567890 --path build/cache
 
        Export session work to remote:
               $ agt session export --session-id agent-001
@@ -425,6 +550,8 @@ EXIT STATUS
        0      Success
 
        1      General error
+
+               Also used by agt snapshot status -qq when changes are detected.
 
        2      Invalid command or options
 

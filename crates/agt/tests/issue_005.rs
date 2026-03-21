@@ -231,10 +231,10 @@ fn test_git_add_all_respects_gitignore() -> Result<(), Box<dyn std::error::Error
     // Check ignore_me.txt is ABSENT
     // This assertion is expected to FAIL if git_porcelain.rs doesn't handle ignore
     let ignore_entry = tree.lookup_entry_by_path(Path::new("ignore_me.txt"))?;
-    if ignore_entry.is_some() {
-        // Failing explicitly to show the bug
-        panic!("FIXME: ignore_me.txt was committed despite being in .gitignore!");
-    }
+    assert!(
+        ignore_entry.is_none(),
+        "FIXME: ignore_me.txt was committed despite being in .gitignore!"
+    );
 
     Ok(())
 }

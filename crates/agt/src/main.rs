@@ -8,6 +8,7 @@ mod filter;
 mod gix_cli;
 mod isolation;
 mod scanner;
+mod snapshot;
 
 pub use cli::*;
 
@@ -35,14 +36,18 @@ fn main() -> Result<()> {
         return commands::clone::run(&remote_url, path.as_deref(), &config);
     }
 
-    // Determine if filtering should be disabled
-    let disable_filter = cli.disable_agt || std::env::var("AGT_DISABLE_FILTER").is_ok();
-
     // Load configuration (from ~/.agtconfig and .agt/config)
     let config = config::AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
 
     // Discover repo
     let repo = gix::discover(".").with_context(|| "Failed to discover Git repository")?;
+
+    if let Some(Commands::Snapshot(snapshot_cmd)) = cli.command.clone() {
+        return commands::snapshot::run(&repo, snapshot_cmd, &config);
+    }
+
+    // Determine if filtering should be disabled
+    let disable_filter = cli.disable_agt || std::env::var("AGT_DISABLE_FILTER").is_ok();
 
     // Route to appropriate command handler
     match cli.command {
@@ -65,6 +70,7 @@ fn main() -> Result<()> {
                 &config,
             )
         }
+        Some(Commands::Snapshot(_)) => unreachable!(),
         Some(Commands::Status) => commands::status::run(&repo, &config),
         None => {
             // Git passthrough mode

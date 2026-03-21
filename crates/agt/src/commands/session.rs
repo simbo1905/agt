@@ -274,7 +274,10 @@ fn restore_session(
         .as_secs();
     std::fs::write(&timestamp_file, now.to_string())?;
 
-    println!("Restored session {session_id} to commit {}", shadow_commit.id);
+    println!(
+        "Restored session {session_id} to commit {}",
+        shadow_commit.id
+    );
     println!("  Shadow tree checked out to: {}", session_folder.display());
     println!("  Sandbox reset to user commit: {user_branch_commit}");
 
@@ -397,7 +400,8 @@ fn resolve_start_commit<'repo>(
         Ok(obj) => Ok(obj.object()?.peel_to_commit()?),
         Err(_) => {
             let session_ref = format!("{}{}", config.branch_prefix, spec);
-            Ok(repo.rev_parse_single(session_ref.as_str())?
+            Ok(repo
+                .rev_parse_single(session_ref.as_str())?
                 .object()?
                 .peel_to_commit()?)
         }
@@ -500,7 +504,9 @@ fn repo_root(repo: &Repository) -> Result<PathBuf> {
 }
 
 fn generate_session_id() -> String {
-    use chrono::Utc;
-    let ts = Utc::now().format("%Y%m%d-%H%M%S");
-    format!("session-{ts}")
+    let ts_millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    format!("session-{ts_millis}")
 }
