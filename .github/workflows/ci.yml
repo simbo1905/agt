@@ -204,6 +204,12 @@ jobs:
           path: ${{ steps.package.outputs.archive }}
           if-no-files-found: error
 
+  # This job serves as the single, stable gate for branch protection on `main`.
+  # GitHub branch protection requires specific status check names, and this job
+  # decouples the protection rule from the dynamic matrix job names (macOS, Windows,
+  # Debian Trixie). The job has no native logic; it simply succeeds when all
+  # upstream checks pass. Update branch protection rule in GitHub settings if you
+  # rename or remove this job.
   checks-passed:
     name: Checks Passed
     needs:
@@ -211,8 +217,7 @@ jobs:
       - debian-trixie
     runs-on: ubuntu-latest
     steps:
-      # Protect `main` by requiring this check in the GitHub branch rule or ruleset.
-      - name: Confirm all required checks passed
+      - name: All required checks passed
         run: true
 
   publish-release:
