@@ -9,4 +9,5 @@ for git_var in $(git rev-parse --local-env-vars); do
 done
 
 printf '%s\n' "Running AGT pre-commit safety checks..."
+"$repo_root/.githooks/validate-version.sh"
 make check

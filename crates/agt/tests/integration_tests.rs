@@ -636,7 +636,7 @@ fn test_snapshot_check_reports_changes_between_snapshots() -> Result<(), Box<dyn
     let after = parse_snapshot_tag(&String::from_utf8(second.stdout)?);
 
     let output = agt_cmd_with_git()?
-        .args(["snapshot", "check", "--before", &before, "--after", &after])
+        .args(["snapshot", "diff", &before, &after])
         .current_dir(repo.worktree())
         .output()?;
     assert!(output.status.success());
@@ -645,6 +645,100 @@ fn test_snapshot_check_reports_changes_between_snapshots() -> Result<(), Box<dyn
     assert!(stdout.contains("D README.md"));
     assert!(stdout.contains("M tracked.txt"));
 
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn test_snapshot_check_reports_deletions_ignoring_gitignore(
+) -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_check_reports_deletions_ignoring_gitignore");
+    let temp_dir = tempfile::tempdir()?;
+    let repo_path = temp_dir.path();
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(repo_path)
+        .output()?;
+    fs::write(repo_path.join(".gitignore"), "_generated/\n")?;
+    fs::write(repo_path.join("tracked.txt"), "tracked")?;
+    fs::create_dir_all(repo_path.join("_generated"))?;
+    fs::write(repo_path.join("_generated/artifact.js"), "console.log(1);")?;
+    std::process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(repo_path)
+        .output()?;
+    std::process::Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(repo_path)
+        .output()?;
+    write_agt_config(repo_path, "agt@local", "agtsessions/")?;
+    let first = agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo_path)
+        .output()?;
+    assert!(first.status.success());
+    let before = parse_snapshot_tag(&String::from_utf8(first.stdout)?);
+    fs::remove_file(repo_path.join("_generated/artifact.js"))?;
+    let second = agt_cmd_with_git()?
+        .args(["snapshot", "save", "-m", "after"])
+        .current_dir(repo_path)
+        .output()?;
+    assert!(second.status.success());
+    let after = parse_snapshot_tag(&String::from_utf8(second.stdout)?);
+    let output = agt_cmd_with_git()?
+        .args(["snapshot", "diff", &before, &after])
+        .current_dir(repo_path)
+        .output()?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(
+        stdout.contains("D _generated/artifact.js"),
+        "expected deletion of gitignored file, got: {stdout}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn test_snapshot_diff_auto_sorts_timestamp_tags() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_diff_auto_sorts_timestamp_tags");
+    let temp_dir = tempfile::tempdir()?;
+    let repo_path = temp_dir.path();
+    std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(repo_path)
+        .output()?;
+    fs::write(repo_path.join(".gitignore"), ".agt-snapshots/\n")?;
+    fs::write(repo_path.join("file.txt"), "v1")?;
+    write_agt_config(repo_path, "agt@local", "agtsessions/")?;
+    let first = agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo_path)
+        .output()?;
+    assert!(first.status.success());
+    let older = parse_snapshot_tag(&String::from_utf8(first.stdout)?);
+    fs::write(repo_path.join("file.txt"), "v2")?;
+    fs::write(repo_path.join("new.txt"), "new")?;
+    let second = agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo_path)
+        .output()?;
+    assert!(second.status.success());
+    let newer = parse_snapshot_tag(&String::from_utf8(second.stdout)?);
+    let output = agt_cmd_with_git()?
+        .args(["snapshot", "diff", &newer, &older])
+        .current_dir(repo_path)
+        .output()?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(
+        stdout.contains("A new.txt"),
+        "reversed order should still show additions correctly, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("D new.txt"),
+        "should not show deletions when newer is before, got: {stdout}"
+    );
     Ok(())
 }
 

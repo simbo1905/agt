@@ -11,7 +11,7 @@ pub fn run(repo: &Repository, command: SnapshotCommands, config: &AgtConfig) -> 
             store,
             message,
         } => snapshot::save(repo, config, &target, store.as_deref(), message.as_deref()),
-        SnapshotCommands::Check {
+        SnapshotCommands::Diff {
             before,
             after,
             store,
@@ -19,6 +19,7 @@ pub fn run(repo: &Repository, command: SnapshotCommands, config: &AgtConfig) -> 
         SnapshotCommands::Status { store, quiet } => {
             snapshot::status(repo, store.as_deref(), quiet)
         }
+        SnapshotCommands::List { store } => snapshot::list(repo, store.as_deref()),
         SnapshotCommands::Restore {
             snapshot: snapshot_name,
             target,

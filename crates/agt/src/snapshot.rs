@@ -112,16 +112,47 @@ pub fn save(
     Ok(())
 }
 
+pub fn setup(store: Option<&Path>) -> Result<()> {
+    let current_dir = std::env::current_dir()?;
+    let store_path = resolve_store_path(store, &current_dir)?;
+
+    ensure_store_directory(&store_path)?;
+
+    if let Some(repo_root) = discover_repo_root(&current_dir)? {
+        ensure_store_ignored(&repo_root, &store_path)?;
+    }
+
+    println!("Snapshot store ready at {}", store_path.display());
+    Ok(())
+}
+
+fn is_timestamp_tag(tag: &str) -> Option<u64> {
+    let digits: String = tag.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() >= 17 {
+        digits.parse::<u64>().ok()
+    } else {
+        None
+    }
+}
+
 pub fn check(_repo: &Repository, before: &str, after: &str, store: Option<&Path>) -> Result<()> {
     ensure_supported_platform()?;
     let current_dir = std::env::current_dir()?;
     let store_path = resolve_store_path(store, &current_dir)?;
     let snapshot_repo = open_snapshot_repo(&store_path)?;
-    let before_manifest = load_manifest_for_tag(&snapshot_repo, before)?;
-    let after_manifest = load_manifest_for_tag(&snapshot_repo, after)?;
+
+    let (sorted_before, sorted_after) = match (is_timestamp_tag(before), is_timestamp_tag(after)) {
+        (Some(before_ts), Some(after_ts)) if before_ts > after_ts => {
+            (after.to_string(), before.to_string())
+        }
+        _ => (before.to_string(), after.to_string()),
+    };
+
+    let before_manifest = load_manifest_for_tag(&snapshot_repo, &sorted_before)?;
+    let after_manifest = load_manifest_for_tag(&snapshot_repo, &sorted_after)?;
     let diff = diff_manifests(&before_manifest, &after_manifest);
 
-    println!("Comparing {before} -> {after}");
+    println!("Comparing {} -> {}", sorted_before, sorted_after);
     emit_diff(&diff);
     Ok(())
 }
@@ -160,6 +191,30 @@ pub fn status(_repo: &Repository, store: Option<&Path>, quiet: u8) -> Result<()>
     if diff.is_empty() {
         println!("Clean");
     }
+    Ok(())
+}
+
+pub fn list(_repo: &Repository, store: Option<&Path>) -> Result<()> {
+    ensure_supported_platform()?;
+    let current_dir = std::env::current_dir()?;
+    let store_path = resolve_store_path(store, &current_dir)?;
+    let snapshot_repo = open_snapshot_repo(&store_path)?;
+
+    let mut tags: Vec<String> = Vec::new();
+    for reference in snapshot_repo.references()?.tags()? {
+        let reference = reference.map_err(|err| anyhow::anyhow!(err.to_string()))?;
+        let full_name = reference.name().as_bstr().to_string();
+        let Some(short_name) = full_name.strip_prefix("refs/tags/") else {
+            continue;
+        };
+        tags.push(short_name.to_string());
+    }
+
+    tags.sort();
+    for tag in &tags {
+        println!("{tag}");
+    }
+    println!("\n{} snapshot(s)", tags.len());
     Ok(())
 }
 
@@ -289,6 +344,24 @@ fn open_or_init_snapshot_repo(path: &Path) -> Result<Repository> {
     Ok(gix::init_bare(path)?)
 }
 
+fn ensure_store_directory(path: &Path) -> Result<()> {
+    if path.exists() {
+        if path.is_dir() {
+            return Ok(());
+        }
+        bail!(
+            "Snapshot store {} exists but is not a directory",
+            path.display()
+        );
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::create_dir_all(path)?;
+    Ok(())
+}
+
 fn open_snapshot_repo(path: &Path) -> Result<Repository> {
     gix::open(path).with_context(|| format!("Failed to open snapshot store {}", path.display()))
 }
@@ -347,6 +420,57 @@ fn warn_if_store_not_ignored(
             Ok(())
         }
     }
+}
+
+fn discover_repo_root(current_dir: &Path) -> Result<Option<PathBuf>> {
+    match gix::discover(current_dir) {
+        Ok(repo) => Ok(repo
+            .work_dir()
+            .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))),
+        Err(_) => Ok(None),
+    }
+}
+
+fn ensure_store_ignored(repo_root: &Path, store_path: &Path) -> Result<()> {
+    let store_abs = store_path
+        .canonicalize()
+        .unwrap_or_else(|_| store_path.to_path_buf());
+    if !store_abs.starts_with(repo_root) {
+        return Ok(());
+    }
+
+    let rel = store_abs
+        .strip_prefix(repo_root)
+        .with_context(|| format!("{} is outside {}", store_abs.display(), repo_root.display()))?;
+    if rel.as_os_str().is_empty() {
+        bail!("Snapshot store cannot be the repository root")
+    }
+
+    let ignore_entry = ignore_entry_for(rel);
+    let gitignore_path = repo_root.join(".gitignore");
+    let mut lines = if gitignore_path.exists() {
+        fs::read_to_string(&gitignore_path)?
+            .lines()
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    if lines.iter().any(|line| line.trim() == ignore_entry) {
+        return Ok(());
+    }
+
+    lines.push(ignore_entry.to_string());
+    let mut contents = lines.join("\n");
+    contents.push('\n');
+    fs::write(gitignore_path, contents)?;
+    Ok(())
+}
+
+fn ignore_entry_for(path: &Path) -> String {
+    let normalized = normalize_rel_path(path);
+    format!("{normalized}/")
 }
 
 fn capture_records(

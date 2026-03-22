@@ -14,7 +14,11 @@ rm -rf "$HARNESS_ROOT"
 mkdir -p "$WORKSPACE" "$RUNNER_TEMP"
 
 echo "=== Mirroring workspace into fake GitHub runner path ==="
-git archive HEAD | tar -x -C "$WORKSPACE"
+rsync -a --delete \
+	--exclude target \
+	--exclude dist \
+	--exclude .tmp \
+	"$(git rev-parse --show-toplevel)/" "$WORKSPACE/"
 
 echo "=== Building release binary ==="
 cargo build --release --manifest-path "$WORKSPACE/Cargo.toml"
