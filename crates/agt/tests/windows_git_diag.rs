@@ -11,8 +11,25 @@ fn configured_git() -> Option<PathBuf> {
         .filter(|path| path.exists())
 }
 
+fn log_test_start(test_name: &str) {
+    if std::env::var("AGT_LOG").is_ok() {
+        if let Some(log_path) = std::env::var_os("AGT_LOG_PATH") {
+            let path = PathBuf::from(log_path);
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                use std::io::Write;
+                let _ = writeln!(file, "[agt] test started: {}", test_name);
+            }
+        }
+    }
+}
+
 #[test]
 fn test_windows_git_runner_resolution_and_passthrough() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_windows_git_runner_resolution_and_passthrough");
     let Some(git) = configured_git() else {
         eprintln!("skipping windows git diagnostic: AGT_TEST_REAL_GIT not set");
         return Ok(());

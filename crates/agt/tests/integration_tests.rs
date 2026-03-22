@@ -14,6 +14,22 @@ fn agt_bin() -> PathBuf {
     assert_cmd::cargo::cargo_bin!("agt").to_path_buf()
 }
 
+fn log_test_start(test_name: &str) {
+    if std::env::var("AGT_LOG").is_ok() {
+        if let Some(log_path) = std::env::var_os("AGT_LOG_PATH") {
+            let path = PathBuf::from(log_path);
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                use std::io::Write;
+                let _ = writeln!(file, "[agt] test started: {}", test_name);
+            }
+        }
+    }
+}
+
 #[cfg(unix)]
 fn run_with_agt_log_script() -> PathBuf {
     repo_root().join(".github/scripts/run-with-agt-log.sh")
@@ -538,6 +554,7 @@ fn test_clone_creates_repo_layout() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn test_snapshot_save_creates_store_and_includes_gitignored_files(
 ) -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_save_creates_store_and_includes_gitignored_files");
     let repo = setup_basic_repo()?;
     write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
     fs::write(repo.worktree().join(".gitignore"), ".agt-snapshots/\n")?;
@@ -574,6 +591,7 @@ fn test_snapshot_save_creates_store_and_includes_gitignored_files(
 #[test]
 fn test_snapshot_save_warns_when_store_is_not_gitignored() -> Result<(), Box<dyn std::error::Error>>
 {
+    log_test_start("test_snapshot_save_warns_when_store_is_not_gitignored");
     let repo = setup_basic_repo()?;
     write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
     fs::write(repo.worktree().join("generated.txt"), "hello")?;
@@ -592,6 +610,7 @@ fn test_snapshot_save_warns_when_store_is_not_gitignored() -> Result<(), Box<dyn
 #[test]
 fn test_snapshot_check_reports_changes_between_snapshots() -> Result<(), Box<dyn std::error::Error>>
 {
+    log_test_start("test_snapshot_check_reports_changes_between_snapshots");
     let repo = setup_basic_repo()?;
     write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
     fs::write(repo.worktree().join(".gitignore"), ".agt-snapshots/\n")?;
@@ -631,6 +650,7 @@ fn test_snapshot_check_reports_changes_between_snapshots() -> Result<(), Box<dyn
 #[cfg(unix)]
 #[test]
 fn test_snapshot_restore_restores_prior_state() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_restore_restores_prior_state");
     let repo = setup_basic_repo()?;
     write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
     fs::write(repo.worktree().join(".gitignore"), ".agt-snapshots/\n")?;
