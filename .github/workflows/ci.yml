@@ -86,6 +86,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - name: macOS
+            runner: macos-latest
+            artifact_name: macos
+            archive_name: agt-macos
           - name: Windows
             runner: windows-latest
             artifact_name: windows
@@ -181,7 +185,6 @@ jobs:
 
   debian-trixie:
     name: Debian Trixie
-    if: false
     needs: release-meta
     runs-on: ubuntu-latest
     container:
@@ -239,6 +242,7 @@ jobs:
     name: Checks Passed
     needs:
       - native-checks
+      - debian-trixie
     runs-on: ubuntu-latest
     steps:
       - name: All required checks passed
