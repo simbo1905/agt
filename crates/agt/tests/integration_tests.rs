@@ -14,6 +14,7 @@ fn agt_bin() -> PathBuf {
     assert_cmd::cargo::cargo_bin!("agt").to_path_buf()
 }
 
+#[allow(dead_code)]
 fn log_test_start(test_name: &str) {
     if std::env::var("AGT_LOG").is_ok() {
         if let Some(log_path) = std::env::var_os("AGT_LOG_PATH") {
