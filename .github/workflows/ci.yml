@@ -105,7 +105,13 @@ jobs:
       - name: Snapshot integration tests
         run: cargo test test_snapshot_ --test integration_tests -- --nocapture
       - name: Full test suite
+        if: runner.os != 'Windows'
         run: cargo test --workspace --all-targets --all-features -- --nocapture
+      - name: Full test suite
+        if: runner.os == 'Windows'
+        env:
+          AGT_DEBUG: 1
+        run: cargo test --workspace --all-targets --all-features -- --nocapture --test-threads=1
       - name: Build release binaries
         run: cargo build --workspace --release
       - name: Package release bundle (Unix)

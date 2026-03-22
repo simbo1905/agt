@@ -13,18 +13,21 @@ pub fn run(
     config: &AgtConfig,
     repo: &Repository,
 ) -> Result<()> {
+    let is_git_mode = _is_git_mode;
+    debug_log(&format!(
+        "passthrough: start is_git_mode={is_git_mode} disable_filter={disable_filter} args={args:?}"
+    ));
     if args.is_empty() {
         // Show help if no git command provided
         Command::new(find_git_binary()?).arg("--help").status()?;
         return Ok(());
     }
-
-    let is_git_mode = _is_git_mode;
     if is_git_mode && args.first().map(String::as_str) == Some("worktree") {
         anyhow::bail!("worktree operations are disabled in git mode");
     }
 
     if is_git_mode && git_porcelain::maybe_handle_git_command(args, repo)? {
+        debug_log("passthrough: handled by git_porcelain");
         return Ok(());
     }
 
@@ -42,6 +45,10 @@ pub fn run(
 
     let git_binary = find_git_binary()?;
     let cmd_name = args.first().map(String::as_str).unwrap_or("");
+    debug_log(&format!(
+        "passthrough: spawning host git {}",
+        git_binary.display()
+    ));
 
     // Spawn git with stdout piped for filtering, stderr inherited
     let mut child = Command::new(&git_binary)
@@ -49,6 +56,7 @@ pub fn run(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()?;
+    debug_log("passthrough: host git spawned");
 
     let stdout = child.stdout.take().unwrap();
     let reader = BufReader::new(stdout);
@@ -57,6 +65,9 @@ pub fn run(
         // Line-by-line filtering for commands that need it
         match cmd_name {
             "branch" | "tag" => {
+                debug_log(&format!(
+                    "passthrough: filtering line-based output for {cmd_name}"
+                ));
                 for line in reader.lines() {
                     let line = line?;
                     if !has_branch_prefix(&line, &config.branch_prefix) {
@@ -68,12 +79,16 @@ pub fn run(
             }
             "log" => {
                 // For log, we need to buffer blocks since commits span multiple lines
+                debug_log("passthrough: buffering log output for filtering");
                 let output: String = reader.lines().collect::<Result<Vec<_>, _>>()?.join("\n");
                 let filtered = filter_log_output(&output, config);
                 print!("{}", filtered);
             }
             _ => {
                 // No filtering for other commands
+                debug_log(&format!(
+                    "passthrough: passthrough line copy for {cmd_name}"
+                ));
                 for line in reader.lines() {
                     println!("{}", line?);
                 }
@@ -81,12 +96,18 @@ pub fn run(
         }
     } else {
         // No filtering - just pass through
+        debug_log("passthrough: unfiltered line copy");
         for line in reader.lines() {
             println!("{}", line?);
         }
     }
 
+    debug_log("passthrough: waiting for host git exit");
     let status = child.wait()?;
+    debug_log(&format!(
+        "passthrough: exiting with status {:?}",
+        status.code()
+    ));
     process::exit(status.code().unwrap_or(1));
 }
 
@@ -141,4 +162,10 @@ fn has_branch_prefix(line: &str, prefix: &str) -> bool {
 
 fn debug_enabled() -> bool {
     std::env::var("AGT_DEBUG").as_deref() == Ok("1")
+}
+
+fn debug_log(message: &str) {
+    if debug_enabled() {
+        eprintln!("[agt] {message}");
+    }
 }

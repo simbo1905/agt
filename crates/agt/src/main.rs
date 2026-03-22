@@ -81,6 +81,7 @@ fn main() -> Result<()> {
 }
 
 fn run_git_mode() -> Result<()> {
+    debug_log("run_git_mode: start");
     // In git mode we do not use clap parsing of subcommands: we must accept arbitrary
     // git-style flags (e.g. `-c`, `--work-tree`, etc.) and pass them through.
     let mut args = Vec::<String>::new();
@@ -107,14 +108,24 @@ fn run_git_mode() -> Result<()> {
     }
 
     if let Some(dir) = directory {
+        debug_log(&format!("run_git_mode: chdir to {}", dir.display()));
         std::env::set_current_dir(&dir)
             .with_context(|| format!("Failed to change to directory: {}", dir.display()))?;
     }
 
     // Load configuration (from ~/.agtconfig and .agt/config)
+    debug_log("run_git_mode: loading config");
     let config = config::AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
 
+    debug_log("run_git_mode: discovering repo");
     let repo = gix::discover(".").with_context(|| "Failed to discover Git repository")?;
 
+    debug_log(&format!("run_git_mode: dispatch {:?}", args));
     commands::passthrough::run(&args, true, disable_filter, &config, &repo)
+}
+
+fn debug_log(message: &str) {
+    if std::env::var("AGT_DEBUG").as_deref() == Ok("1") {
+        eprintln!("[agt] {message}");
+    }
 }

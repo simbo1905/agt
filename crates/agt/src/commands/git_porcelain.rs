@@ -10,13 +10,18 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 pub fn maybe_handle_git_command(args: &[String], repo: &Repository) -> Result<bool> {
+    debug_log(&format!("git_porcelain: dispatch {:?}", args));
     match args.first().map(String::as_str) {
         Some("add") => {
+            debug_log("git_porcelain: handling add");
             git_add(args, repo)?;
+            debug_log("git_porcelain: add done");
             Ok(true)
         }
         Some("commit") => {
+            debug_log("git_porcelain: handling commit");
             git_commit(args, repo)?;
+            debug_log("git_porcelain: commit done");
             Ok(true)
         }
         _ => Ok(false),
@@ -24,11 +29,15 @@ pub fn maybe_handle_git_command(args: &[String], repo: &Repository) -> Result<bo
 }
 
 fn git_add(args: &[String], repo: &Repository) -> Result<()> {
+    debug_log("git_porcelain: git_add start");
     let work_dir = repo
         .work_dir()
         .context("No working directory found for git add")?;
 
     let AddArgs { all, update, paths } = parse_add_args(args)?;
+    debug_log(&format!(
+        "git_porcelain: git_add parsed all={all} update={update} paths={paths:?}"
+    ));
 
     let mut index = repo
         .index_or_load_from_head_or_empty()
@@ -44,17 +53,25 @@ fn git_add(args: &[String], repo: &Repository) -> Result<()> {
     }
 
     index.sort_entries();
+    debug_log("git_porcelain: git_add writing index");
     index.write(Default::default())?;
+    debug_log("git_porcelain: git_add finish");
 
     Ok(())
 }
 
 fn git_commit(args: &[String], repo: &Repository) -> Result<()> {
+    debug_log("git_porcelain: git_commit start");
     let message = parse_commit_message(args)?;
+    debug_log(&format!(
+        "git_porcelain: git_commit parsed message bytes={}",
+        message.len()
+    ));
     let mut index = repo
         .open_index()
         .context("Failed to open index (nothing staged?)")?;
 
+    debug_log("git_porcelain: git_commit writing tree from index");
     let tree_id = write_tree_from_index(repo, &mut index)?;
 
     let mut head = repo.head()?;
@@ -69,12 +86,17 @@ fn git_commit(args: &[String], repo: &Repository) -> Result<()> {
         .as_bstr()
         .to_str()
         .context("Non-utf8 branch name")?;
+    debug_log(&format!("git_porcelain: git_commit ref={ref_name}"));
 
     let parents = if head.is_unborn() {
         Vec::new()
     } else {
         vec![head.peel_to_commit_in_place()?.id]
     };
+    debug_log(&format!(
+        "git_porcelain: git_commit parent_count={}",
+        parents.len()
+    ));
 
     let (name, email) = signature_from_config(repo);
     let signature = gix::actor::SignatureRef {
@@ -84,8 +106,15 @@ fn git_commit(args: &[String], repo: &Repository) -> Result<()> {
     };
     let commit_id = repo.commit_as(signature, signature, ref_name, &message, tree_id, parents)?;
 
+    debug_log(&format!("git_porcelain: git_commit created {commit_id}"));
     println!("Created commit {commit_id}");
     Ok(())
+}
+
+fn debug_log(message: &str) {
+    if std::env::var("AGT_DEBUG").as_deref() == Ok("1") {
+        eprintln!("[agt] {message}");
+    }
 }
 
 struct AddArgs {
