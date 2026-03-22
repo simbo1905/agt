@@ -59,6 +59,10 @@ jobs:
             release_notes="Draft nightly release from main at ${GITHUB_SHA}."
           elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/tags/release/* ]]; then
             version="${GITHUB_REF_NAME#release/}"
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+              echo "ERROR: Tag version '$version' is not semver compliant. Use format: release/X.Y.Z or release/X.Y.Z-suffix"
+              exit 1
+            fi
             publish=true
             release_kind=semver
             release_tag="${GITHUB_REF_NAME}"
