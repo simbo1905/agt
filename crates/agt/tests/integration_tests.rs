@@ -909,6 +909,8 @@ fn init_bare_repo_with_commit(path: &Path) -> Result<(), Box<dyn std::error::Err
         NO_PARENT_IDS,
     )?;
 
+    std::fs::write(path.join("HEAD"), "ref: refs/heads/main\n")?;
+
     Ok(())
 }
 
