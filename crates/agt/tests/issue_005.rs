@@ -90,6 +90,13 @@ fn ensure_worktree_tool() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 fn find_real_git() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if let Ok(path) = std::env::var("AGT_TEST_REAL_GIT") {
+        let candidate = PathBuf::from(&path);
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
     // Check AGT_GIT_PATH env var first
     if let Ok(path) = std::env::var("AGT_GIT_PATH") {
         let candidate = PathBuf::from(&path);

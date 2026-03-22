@@ -17,6 +17,17 @@ if (Test-Path $agtLog) {
 $env:AGT_DEBUG = "1"
 $env:AGT_DEBUG_LOG = $agtLog
 
+if (-not $env:AGT_TEST_REAL_GIT) {
+  throw "AGT_TEST_REAL_GIT is not set"
+}
+
+Write-Host "Using git.exe for tests: $env:AGT_TEST_REAL_GIT"
+& $env:AGT_TEST_REAL_GIT --version
+if ($LASTEXITCODE -ne 0) {
+  throw "AGT_TEST_REAL_GIT failed --version"
+}
+
+
 $arguments = @(
   "test",
   "--workspace",

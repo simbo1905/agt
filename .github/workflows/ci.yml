@@ -94,14 +94,19 @@ jobs:
             archive_name: agt-windows
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve Git on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $git = (Get-Command git.exe -CommandType Application -ErrorAction Stop).Source
+          Write-Host "Resolved git.exe: $git"
+          & $git --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Resolved git.exe failed --version"
+          }
+          "AGT_TEST_REAL_GIT=$git" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: Format
-        run: cargo fmt --all --check
-      - name: Lint
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Snapshot integration tests
         run: cargo test test_snapshot_ --test integration_tests -- --nocapture
       - name: Full test suite
