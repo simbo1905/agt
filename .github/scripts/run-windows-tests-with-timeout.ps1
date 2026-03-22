@@ -1,21 +1,10 @@
 $ErrorActionPreference = "Stop"
 
-$cargoStdoutLog = Join-Path $env:RUNNER_TEMP "cargo-test-stdout.log"
-$cargoStderrLog = Join-Path $env:RUNNER_TEMP "cargo-test-stderr.log"
-$agtLog = Join-Path $env:RUNNER_TEMP "agt-debug.log"
+$agtLog = if ($env:AGT_LOG_PATH) { $env:AGT_LOG_PATH } else { Join-Path $env:RUNNER_TEMP "agt.log" }
 
-if (Test-Path $cargoStdoutLog) {
-  Remove-Item $cargoStdoutLog -Force
-}
-if (Test-Path $cargoStderrLog) {
-  Remove-Item $cargoStderrLog -Force
-}
 if (Test-Path $agtLog) {
   Remove-Item $agtLog -Force
 }
-
-$env:AGT_DEBUG = "1"
-$env:AGT_DEBUG_LOG = $agtLog
 
 if (-not $env:AGT_TEST_REAL_GIT) {
   throw "AGT_TEST_REAL_GIT is not set"
@@ -44,8 +33,6 @@ $startProcessArgs = @{
   FilePath = "cargo"
   ArgumentList = $arguments
   NoNewWindow = $true
-  RedirectStandardOutput = $cargoStdoutLog
-  RedirectStandardError = $cargoStderrLog
   PassThru = $true
 }
 
@@ -64,34 +51,21 @@ while (-not $process.HasExited) {
 
 if ($timedOut) {
   Write-Host "Cargo test timed out; terminating process tree"
-  taskkill /PID $process.Id /T /F | Out-Host
+  try {
+    taskkill /PID $process.Id /T /F 2>&1 | Out-Host
+  }
+  catch {
+    Write-Host "taskkill raised: $_"
+  }
+  try {
+    $process.WaitForExit()
+  }
+  catch {
+    Write-Host "wait after taskkill raised: $_"
+  }
 }
 else {
   $process.WaitForExit()
-}
-
-if (Test-Path $cargoStdoutLog) {
-  Write-Host "--- cargo test stdout ---"
-  Get-Content $cargoStdoutLog
-}
-else {
-  Write-Host "No cargo test stdout log found"
-}
-
-if (Test-Path $cargoStderrLog) {
-  Write-Host "--- cargo test stderr ---"
-  Get-Content $cargoStderrLog
-}
-else {
-  Write-Host "No cargo test stderr log found"
-}
-
-if (Test-Path $agtLog) {
-  Write-Host "--- AGT debug log ---"
-  Get-Content $agtLog
-}
-else {
-  Write-Host "No AGT debug log found"
 }
 
 if ($timedOut) {

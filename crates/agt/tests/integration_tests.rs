@@ -14,6 +14,21 @@ fn agt_bin() -> PathBuf {
     assert_cmd::cargo::cargo_bin!("agt").to_path_buf()
 }
 
+#[cfg(unix)]
+fn run_with_agt_log_script() -> PathBuf {
+    repo_root().join(".github/scripts/run-with-agt-log.sh")
+}
+
+#[cfg(unix)]
+fn write_shell_script(path: &Path, body: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::write(path, format!("#!/bin/sh\nset -eu\n{body}\n"))?;
+    let mut perms = fs::metadata(path)?.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms)?;
+    Ok(())
+}
+
 fn agt_cmd_with_git() -> Result<AgtCommand, Box<dyn std::error::Error>> {
     let mut cmd = AgtCommand::new(agt_bin());
     // Point to real git binary for any passthrough operations
@@ -71,6 +86,81 @@ fn write_mock_git_executable(
         );
         fs::write(path, script)?;
     }
+
+    Ok(())
+}
+
+#[test]
+fn test_agt_log_defaults_to_exe_name_in_cwd() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    gix::init(tmp.path())?;
+
+    let output = agt_cmd_with_git()?
+        .arg("--version")
+        .env("AGT_LOG", "1")
+        .env_remove("AGT_LOG_PATH")
+        .current_dir(tmp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    let log_path = tmp
+        .path()
+        .join(format!("agt{}.log", std::env::consts::EXE_SUFFIX));
+    assert!(
+        log_path.exists(),
+        "expected {} to exist",
+        log_path.display()
+    );
+    let log = fs::read_to_string(log_path)?;
+    assert!(log.contains("logging initialized"));
+
+    Ok(())
+}
+
+#[test]
+fn test_agt_log_path_overrides_default_location() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    gix::init(tmp.path())?;
+
+    let log_dir = tmp.path().join("custom-log-dir");
+    fs::create_dir_all(&log_dir)?;
+    let custom_log_path = log_dir.join("override.log");
+
+    let output = agt_cmd_with_git()?
+        .arg("--version")
+        .env("AGT_LOG", "1")
+        .env("AGT_LOG_PATH", &custom_log_path)
+        .current_dir(tmp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    assert!(custom_log_path.exists());
+    assert!(!tmp
+        .path()
+        .join(format!("agt{}.log", std::env::consts::EXE_SUFFIX))
+        .exists());
+
+    Ok(())
+}
+
+#[test]
+fn test_agt_log_fails_fast_when_log_path_is_not_writable() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = TempDir::new()?;
+    gix::init(tmp.path())?;
+
+    let bad_log_path = tmp.path().join("missing-parent").join("agt.log");
+    let output = agt_cmd_with_git()?
+        .arg("--version")
+        .env("AGT_LOG", "1")
+        .env("AGT_LOG_PATH", &bad_log_path)
+        .current_dir(tmp.path())
+        .output()?;
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("AGT_LOG requested but cannot write log file"));
+    assert!(stderr.contains(&bad_log_path.display().to_string()));
 
     Ok(())
 }
@@ -252,6 +342,82 @@ fn test_passthrough_uses_git_path() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn test_run_with_agt_log_dumps_log_on_success() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    let log_path = tmp.path().join("agt.log");
+    let cmd_path = tmp.path().join("mock-success");
+    write_shell_script(
+        &cmd_path,
+        "printf '%s\\n' '[agt] clean log line' >> \"$AGT_LOG_PATH\"\nexit 0",
+    )?;
+
+    let output = Command::new("bash")
+        .arg(run_with_agt_log_script())
+        .arg(&cmd_path)
+        .env("AGT_LOG_PATH", &log_path)
+        .output()?;
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains(&format!("--- AGT log: {} ---", log_path.display())));
+    assert!(stdout.contains("[agt] clean log line"));
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn test_run_with_agt_log_fails_when_log_contains_error_marker(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    let log_path = tmp.path().join("agt.log");
+    let cmd_path = tmp.path().join("mock-clean-exit-bad-log");
+    write_shell_script(
+        &cmd_path,
+        "printf '%s\\n' '[agt] passthrough: delegated command failed path=/tmp/git args=[\"status\"] code=Some(23)' >> \"$AGT_LOG_PATH\"\nexit 0",
+    )?;
+
+    let output = Command::new("bash")
+        .arg(run_with_agt_log_script())
+        .arg(&cmd_path)
+        .env("AGT_LOG_PATH", &log_path)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("delegated command failed"));
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn test_run_with_agt_log_preserves_command_failure_status() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = TempDir::new()?;
+    let log_path = tmp.path().join("agt.log");
+    let cmd_path = tmp.path().join("mock-failure");
+    write_shell_script(
+        &cmd_path,
+        "printf '%s\\n' '[agt] clean log line' >> \"$AGT_LOG_PATH\"\nexit 23",
+    )?;
+
+    let output = Command::new("bash")
+        .arg(run_with_agt_log_script())
+        .arg(&cmd_path)
+        .env("AGT_LOG_PATH", &log_path)
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(23));
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains(&format!("--- AGT log: {} ---", log_path.display())));
+    assert!(stdout.contains("[agt] clean log line"));
+
+    Ok(())
+}
+
 #[test]
 fn test_passthrough_debug_log_records_successful_delegate() -> Result<(), Box<dyn std::error::Error>>
 {
@@ -269,8 +435,8 @@ fn test_passthrough_debug_log_records_successful_delegate() -> Result<(), Box<dy
     let output = agt_cmd_with_git()?
         .args(["branch"])
         .env("AGT_GIT_PATH", &mock_git_path)
-        .env("AGT_DEBUG", "1")
-        .env("AGT_DEBUG_LOG", &debug_log)
+        .env("AGT_LOG", "1")
+        .env("AGT_LOG_PATH", &debug_log)
         .current_dir(tmp.path())
         .output()?;
 
@@ -301,8 +467,8 @@ fn test_passthrough_debug_log_records_failed_delegate() -> Result<(), Box<dyn st
     let output = agt_cmd_with_git()?
         .args(["branch"])
         .env("AGT_GIT_PATH", &mock_git_path)
-        .env("AGT_DEBUG", "1")
-        .env("AGT_DEBUG_LOG", &debug_log)
+        .env("AGT_LOG", "1")
+        .env("AGT_LOG_PATH", &debug_log)
         .current_dir(tmp.path())
         .output()?;
 

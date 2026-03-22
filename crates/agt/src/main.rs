@@ -1,3 +1,4 @@
+use crate::logging::debug_log;
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::Path;
@@ -8,6 +9,7 @@ mod config;
 mod filter;
 mod gix_cli;
 mod isolation;
+mod logging;
 mod path_util;
 mod scanner;
 mod snapshot;
@@ -16,14 +18,16 @@ pub use cli::*;
 
 fn main() -> Result<()> {
     let argv: Vec<String> = std::env::args().collect();
+    let invoked_as = argv.first().cloned().unwrap_or_default();
 
-    if should_show_own_version(&argv[1..]) {
+    logging::init(&invoked_as)?;
+
+    if should_show_own_version(argv.get(1..).unwrap_or(&[])) {
         print_own_version();
         return Ok(());
     }
 
     // Dual-mode detection based on how the binary was invoked
-    let invoked_as = argv.first().cloned().unwrap_or_default();
     let invoked_name = Path::new(&invoked_as)
         .file_name()
         .and_then(|name| name.to_str())
@@ -150,20 +154,4 @@ fn run_git_mode() -> Result<()> {
 
     debug_log(&format!("run_git_mode: dispatch {:?}", args));
     commands::passthrough::run(&args, true, disable_filter, &config, &repo)
-}
-
-fn debug_log(message: &str) {
-    if std::env::var("AGT_DEBUG").as_deref() == Ok("1") {
-        eprintln!("[agt] {message}");
-    }
-    if let Ok(path) = std::env::var("AGT_DEBUG_LOG") {
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .and_then(|mut file| {
-                use std::io::Write;
-                writeln!(file, "[agt] {message}")
-            });
-    }
 }

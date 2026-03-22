@@ -379,7 +379,14 @@ OPTIONS
               Supported by both git and agt commands.
 
        --version
-              Print version information.
+               When invoked as `agt`, print agt's own version string.
+
+               When invoked as `git`, delegate `--version` to the configured
+               real git binary so the reported version matches the host git.
+
+               If AGT_SHOW_OWN_VERSION is set, agt always prints its own
+               version string regardless of whether it was invoked as `agt`
+               or `git`.
 
        --help
               Print help for the command.
@@ -420,11 +427,26 @@ ENVIRONMENT
               If set to "1", disables filtering even in git mode. Equivalent
               to --disable-agt flag.
 
-       AGT_DEBUG
-              If set to "1", enables debug output showing filtering decisions.
+       AGT_SHOW_OWN_VERSION
+              If set, agt prints its own version string for --version even when
+              invoked as `git`/`git.exe`.
+
+       AGT_LOG
+              If set to a truthy value, agt appends diagnostic log lines to a
+              log file for the lifetime of the current process. Startup fails
+              immediately if the chosen log path cannot be opened for append.
+
+              If AGT_LOG_PATH is unset, the log file defaults to
+              `<argv0-basename>.log` in the current working directory (for
+              example, `agt.log` or `git.exe.log`).
+
+       AGT_LOG_PATH
+              Override the path used when AGT_LOG is enabled. Useful when the
+              current directory is not writable, such as immutable containers or
+              binaries launched from protected locations.
 
        AGT_GIT_PATH
-               Override agt.gitPath configuration. Path to the real git binary.
+                Override agt.gitPath configuration. Path to the real git binary.
 
        AGT_SNAPSHOT_STORE
                Override the standalone snapshot store location. Equivalent to

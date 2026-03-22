@@ -1,3 +1,4 @@
+use crate::logging::debug_log;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -118,20 +119,4 @@ pub fn repo_base_path(repo: &gix::Repository) -> PathBuf {
     repo.work_dir()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| repo.common_dir().to_path_buf())
-}
-
-fn debug_log(message: &str) {
-    if std::env::var("AGT_DEBUG").as_deref() == Ok("1") {
-        eprintln!("[agt] {message}");
-    }
-    if let Ok(path) = std::env::var("AGT_DEBUG_LOG") {
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .and_then(|mut file| {
-                use std::io::Write;
-                writeln!(file, "[agt] {message}")
-            });
-    }
 }

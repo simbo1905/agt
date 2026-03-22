@@ -1,3 +1,4 @@
+use crate::logging::debug_log;
 use crate::path_util;
 use anyhow::{Context, Result};
 use gix::object::tree::EntryKind;
@@ -109,22 +110,6 @@ fn git_commit(args: &[String], repo: &Repository) -> Result<()> {
     debug_log(&format!("git_porcelain: git_commit created {commit_id}"));
     println!("Created commit {commit_id}");
     Ok(())
-}
-
-fn debug_log(message: &str) {
-    if std::env::var("AGT_DEBUG").as_deref() == Ok("1") {
-        eprintln!("[agt] {message}");
-    }
-    if let Ok(path) = std::env::var("AGT_DEBUG_LOG") {
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .and_then(|mut file| {
-                use std::io::Write;
-                writeln!(file, "[agt] {message}")
-            });
-    }
 }
 
 struct AddArgs {
