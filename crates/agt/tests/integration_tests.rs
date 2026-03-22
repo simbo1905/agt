@@ -72,9 +72,6 @@ fn test_passthrough_uses_git_path() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-// FIXME(windows): linked-worktree metadata still uses Windows-specific path
-// forms, so this layout assertion is temporarily skipped there.
-#[cfg_attr(windows, ignore = "FIXME(windows): linked worktree path handling")]
 fn test_clone_creates_repo_layout() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = TempDir::new()?;
 
@@ -101,7 +98,10 @@ fn test_clone_creates_repo_layout() -> Result<(), Box<dyn std::error::Error>> {
     let git_file = main_worktree.join(".git");
     assert!(git_file.exists());
     let git_content = fs::read_to_string(&git_file)?;
-    assert!(git_content.contains("source.git/worktrees/main"));
+    assert!(
+        git_content.contains("source.git/worktrees/main")
+            || git_content.contains("source.git\\worktrees\\main")
+    );
 
     // Verify worktree admin directory exists with proper metadata
     let admin_dir = bare_repo.join("worktrees/main");
@@ -729,9 +729,6 @@ fn test_autocommit_preserves_symlink_entries() -> Result<(), Box<dyn std::error:
 }
 
 #[test]
-// FIXME(windows): git-mode branch filtering depends on worktree metadata that
-// is not yet portable across Windows path forms.
-#[cfg_attr(windows, ignore = "FIXME(windows): git-mode worktree metadata")]
 fn test_git_mode_filters_shadow_branches() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_shadow_branch()?;
 
@@ -748,9 +745,6 @@ fn test_git_mode_filters_shadow_branches() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
-// FIXME(windows): git-mode add/commit currently trips over Windows worktree
-// metadata and can hang in CI.
-#[cfg_attr(windows, ignore = "FIXME(windows): git-mode worktree metadata")]
 fn test_git_mode_add_and_commit() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_basic_repo()?;
     let worktree = repo.worktree();
@@ -780,12 +774,6 @@ fn test_git_mode_add_and_commit() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-// FIXME(windows): agt branch listing depends on linked-worktree metadata that
-// is not yet portable across Windows path forms.
-#[cfg_attr(
-    windows,
-    ignore = "FIXME(windows): branch listing via worktree metadata"
-)]
 fn test_agt_mode_shows_all_branches() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_shadow_branch()?;
 
@@ -1121,9 +1109,6 @@ fn ensure_worktree_tool() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 #[test]
-// FIXME(windows): restore uses sandbox worktree metadata that still records a
-// Windows-only gitdir form host git rejects.
-#[cfg_attr(windows, ignore = "FIXME(windows): restore sandbox metadata")]
 fn test_restore_resets_sandbox_to_shadow_commit() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_session()?;
     let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
@@ -1188,9 +1173,6 @@ fn test_restore_resets_sandbox_to_shadow_commit() -> Result<(), Box<dyn std::err
 }
 
 #[test]
-// FIXME(windows): restore uses sandbox worktree metadata that still records a
-// Windows-only gitdir form host git rejects.
-#[cfg_attr(windows, ignore = "FIXME(windows): restore sandbox metadata")]
 fn test_restore_resets_agent_state_folders() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_session()?;
     let session_folder = repo.repo_root().join("sessions/test-session");
@@ -1261,9 +1243,6 @@ fn test_restore_resets_agent_state_folders() -> Result<(), Box<dyn std::error::E
 }
 
 #[test]
-// FIXME(windows): restore uses sandbox worktree metadata that still records a
-// Windows-only gitdir form host git rejects.
-#[cfg_attr(windows, ignore = "FIXME(windows): restore sandbox metadata")]
 fn test_restore_continues_autocommit_with_correct_parent() -> Result<(), Box<dyn std::error::Error>>
 {
     let repo = setup_repo_with_session()?;
@@ -1337,9 +1316,6 @@ fn test_restore_continues_autocommit_with_correct_parent() -> Result<(), Box<dyn
 }
 
 #[test]
-// FIXME(windows): restore uses sandbox worktree metadata that still records a
-// Windows-only gitdir form host git rejects.
-#[cfg_attr(windows, ignore = "FIXME(windows): restore sandbox metadata")]
 fn test_restore_deletes_files_not_in_shadow_tree() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_session()?;
     let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
@@ -1396,9 +1372,6 @@ fn test_restore_deletes_files_not_in_shadow_tree() -> Result<(), Box<dyn std::er
 }
 
 #[test]
-// FIXME(windows): restore uses sandbox worktree metadata that still records a
-// Windows-only gitdir form host git rejects.
-#[cfg_attr(windows, ignore = "FIXME(windows): restore sandbox metadata")]
 fn test_restore_preserves_tracked_file_content() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_session()?;
     let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
@@ -1469,9 +1442,6 @@ fn test_restore_preserves_tracked_file_content() -> Result<(), Box<dyn std::erro
 }
 
 #[test]
-// FIXME(windows): export cleanliness checks depend on sandbox metadata that is
-// not yet portable across Windows path forms.
-#[cfg_attr(windows, ignore = "FIXME(windows): export sandbox metadata")]
 fn test_export_requires_clean_worktree() -> Result<(), Box<dyn std::error::Error>> {
     let repo = setup_repo_with_session()?;
     let sandbox_path = repo.repo_root().join("sessions/test-session/sandbox");
@@ -1491,9 +1461,6 @@ fn test_export_requires_clean_worktree() -> Result<(), Box<dyn std::error::Error
 }
 
 #[test]
-// FIXME(windows): export session creation still hits Windows-specific worktree
-// metadata during the first CI bring-up.
-#[cfg_attr(windows, ignore = "FIXME(windows): export session creation")]
 fn test_export_pushes_user_branch() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = TempDir::new()?;
 

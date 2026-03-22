@@ -16,11 +16,33 @@ use std::path::{Path, PathBuf};
 pub fn canonicalize(path: &Path) -> Result<PathBuf> {
     let canonical = std::fs::canonicalize(path)
         .with_context(|| format!("Failed to canonicalize {}", path.display()))?;
-    Ok(simplify(&canonical))
+    Ok(simplify(&normalize_windows_path_for_git(&canonical)))
 }
 
 pub fn canonicalize_or_original(path: &Path) -> PathBuf {
-    canonicalize(path).unwrap_or_else(|_| simplify(path))
+    canonicalize(path).unwrap_or_else(|_| simplify(&normalize_windows_path_for_git(path)))
+}
+
+#[cfg(windows)]
+fn normalize_windows_path_for_git(path: &Path) -> PathBuf {
+    let Some(path_string) = path.to_str() else {
+        return path.to_path_buf();
+    };
+
+    if let Some(without_verbatim) = path_string.strip_prefix("\\\\?\\") {
+        let normalized = without_verbatim
+            .strip_prefix("UNC\\")
+            .map(|unc_path| format!("\\\\{unc_path}"))
+            .unwrap_or_else(|| without_verbatim.to_string());
+        PathBuf::from(normalized)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+#[cfg(not(windows))]
+fn normalize_windows_path_for_git(path: &Path) -> PathBuf {
+    path.to_path_buf()
 }
 
 pub fn simplify(path: &Path) -> PathBuf {

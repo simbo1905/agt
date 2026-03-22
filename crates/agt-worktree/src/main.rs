@@ -135,13 +135,13 @@ fn write_metadata_files(
     head_id: gix::ObjectId,
 ) -> Result<()> {
     let worktree_git = worktree.join(".git");
-    let admin_dir_abs = std::fs::canonicalize(admin_dir)?;
+    let admin_dir_abs = canonicalize_and_normalize_path(admin_dir)?;
     std::fs::write(
         &worktree_git,
         format!("gitdir: {}\n", admin_dir_abs.display()),
     )?;
 
-    let worktree_git_abs = std::fs::canonicalize(&worktree_git)?;
+    let worktree_git_abs = canonicalize_and_normalize_path(&worktree_git)?;
     std::fs::write(
         admin_dir.join("gitdir"),
         format!("{}\n", worktree_git_abs.display()),
@@ -151,6 +151,33 @@ fn write_metadata_files(
     std::fs::write(admin_dir.join("ORIG_HEAD"), format!("{}\n", head_id))?;
 
     Ok(())
+}
+
+fn canonicalize_and_normalize_path(path: &Path) -> Result<PathBuf> {
+    let canonical = std::fs::canonicalize(path).context("Failed to canonicalize metadata path")?;
+    Ok(normalize_windows_metadata_path(&canonical))
+}
+
+#[cfg(windows)]
+fn normalize_windows_metadata_path(path: &Path) -> PathBuf {
+    let Some(path_string) = path.to_str() else {
+        return path.to_path_buf();
+    };
+
+    if let Some(without_verbatim) = path_string.strip_prefix("\\\\?\\") {
+        let normalized = without_verbatim
+            .strip_prefix("UNC\\")
+            .map(|unc_path| format!("\\\\{unc_path}"))
+            .unwrap_or_else(|| without_verbatim.to_string());
+        PathBuf::from(normalized)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+#[cfg(not(windows))]
+fn normalize_windows_metadata_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
 }
 
 fn checkout_tree(
