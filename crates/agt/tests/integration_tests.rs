@@ -609,6 +609,52 @@ fn test_snapshot_save_warns_when_store_is_not_gitignored() -> Result<(), Box<dyn
 
 #[cfg(unix)]
 #[test]
+fn test_snapshot_list_shows_snapshots() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_list_shows_snapshots");
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join("file.txt"), "v1")?;
+
+    let first = agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(first.status.success());
+    let first_tag = parse_snapshot_tag(&String::from_utf8(first.stdout)?);
+
+    fs::write(repo.worktree().join("file.txt"), "v2")?;
+    let second = agt_cmd_with_git()?
+        .args(["snapshot", "save", "-m", "second snapshot"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(second.status.success());
+    let second_tag = parse_snapshot_tag(&String::from_utf8(second.stdout)?);
+
+    let output = agt_cmd_with_git()?
+        .args(["snapshot", "list"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+
+    assert!(
+        stdout.contains(&first_tag),
+        "expected first tag in list output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains(&second_tag),
+        "expected second tag in list output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("2 snapshot(s)"),
+        "expected count in list output, got: {stdout}"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
 fn test_snapshot_check_reports_changes_between_snapshots() -> Result<(), Box<dyn std::error::Error>>
 {
     log_test_start("test_snapshot_check_reports_changes_between_snapshots");
