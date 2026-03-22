@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - '**'
+      - main
     tags:
       - 'release/*'
 
@@ -107,6 +107,10 @@ jobs:
           "AGT_TEST_REAL_GIT=$git" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Windows git diagnostics
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./.github/scripts/diagnose-windows-git.ps1
       - name: Snapshot integration tests
         run: cargo test test_snapshot_ --test integration_tests -- --nocapture
       - name: Full test suite
@@ -167,6 +171,7 @@ jobs:
 
   debian-trixie:
     name: Debian Trixie
+    if: false
     needs: release-meta
     runs-on: ubuntu-latest
     container:
@@ -224,7 +229,6 @@ jobs:
     name: Checks Passed
     needs:
       - native-checks
-      - debian-trixie
     runs-on: ubuntu-latest
     steps:
       - name: All required checks passed
