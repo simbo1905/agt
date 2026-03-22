@@ -266,6 +266,8 @@ This gives full git compatibility while hiding agent implementation details from
 
 - **Merging shadow branches back** - Not yet implemented. Use manual `git merge` to integrate agent work into user branches.
 
+- **Issue #18 compatibility note** - AGT metadata handling now normalizes Windows verbatim paths when writing linked-worktree metadata so legacy integration tests can run under Windows CI.
+
 ## Environment Variables
 
 - `AGT_GIT_PATH` - Override `agt.gitPath` configuration
