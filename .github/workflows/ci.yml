@@ -84,10 +84,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS
-            runner: macos-latest
-            artifact_name: macos
-            archive_name: agt-macos
           - name: Windows
             runner: windows-latest
             artifact_name: windows
@@ -98,7 +94,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $git = (Get-Command git.exe -CommandType Application -ErrorAction Stop).Source
+          $git = ((Get-Command git.exe -CommandType Application -All -ErrorAction Stop) | Select-Object -First 1).Source
           Write-Host "Resolved git.exe: $git"
           & $git --version
           if ($LASTEXITCODE -ne 0) {
