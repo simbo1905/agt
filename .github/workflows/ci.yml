@@ -94,12 +94,22 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $git = ((Get-Command git.exe -CommandType Application -All -ErrorAction Stop) | Select-Object -First 1).Source
-          Write-Host "Resolved git.exe: $git"
-          & $git --version
-          if ($LASTEXITCODE -ne 0) {
-            throw "Resolved git.exe failed --version"
+          $candidates = @(Get-Command git.exe -CommandType Application -All -ErrorAction Stop)
+          if ($candidates.Count -eq 0) {
+            throw "No git.exe found on PATH"
           }
+          foreach ($c in $candidates) {
+            Write-Host "Found git.exe: $($c.Source)"
+            $env:AGT_SHOW_OWN_VERSION = "1"
+            try {
+              & $c.Source --version
+            }
+            finally {
+              Remove-Item Env:AGT_SHOW_OWN_VERSION -ErrorAction SilentlyContinue
+            }
+          }
+          $git = $candidates[-1].Source
+          Write-Host "Selected git.exe (last on PATH): $git"
           "AGT_TEST_REAL_GIT=$git" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

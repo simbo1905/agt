@@ -46,16 +46,26 @@ pub fn run(
     let git_binary = find_git_binary()?;
     let cmd_name = args.first().map(String::as_str).unwrap_or("");
     debug_log(&format!(
-        "passthrough: spawning host git {}",
+        "passthrough: delegating to {} args={args:?}",
         git_binary.display()
     ));
 
     // Spawn git with stdout piped for filtering, stderr inherited
-    let mut child = Command::new(&git_binary)
+    let mut child = match Command::new(&git_binary)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
-        .spawn()?;
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => {
+            debug_log(&format!(
+                "passthrough: delegated command spawn failed path={} args={args:?} error={err}",
+                git_binary.display()
+            ));
+            return Err(err.into());
+        }
+    };
     debug_log("passthrough: host git spawned");
 
     let stdout = child.stdout.take().unwrap();
@@ -104,10 +114,19 @@ pub fn run(
 
     debug_log("passthrough: waiting for host git exit");
     let status = child.wait()?;
-    debug_log(&format!(
-        "passthrough: exiting with status {:?}",
-        status.code()
-    ));
+    if status.success() {
+        debug_log(&format!(
+            "passthrough: delegated command succeeded path={} args={args:?} code={:?}",
+            git_binary.display(),
+            status.code()
+        ));
+    } else {
+        debug_log(&format!(
+            "passthrough: delegated command failed path={} args={args:?} code={:?}",
+            git_binary.display(),
+            status.code()
+        ));
+    }
     process::exit(status.code().unwrap_or(1));
 }
 

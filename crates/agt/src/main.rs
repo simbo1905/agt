@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use std::path::Path;
 
 mod cli;
 mod commands;
@@ -14,9 +15,21 @@ mod snapshot;
 pub use cli::*;
 
 fn main() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+
+    if should_show_own_version(&argv[1..]) {
+        print_own_version();
+        return Ok(());
+    }
+
     // Dual-mode detection based on how the binary was invoked
-    let invoked_as = std::env::args().next().unwrap_or_default();
-    let is_git_mode = invoked_as.contains("git") && !invoked_as.contains("agt");
+    let invoked_as = argv.first().cloned().unwrap_or_default();
+    let invoked_name = Path::new(&invoked_as)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&invoked_as)
+        .to_ascii_lowercase();
+    let is_git_mode = invoked_name.contains("git") && !invoked_name.contains("agt");
 
     if is_git_mode {
         return run_git_mode();
@@ -74,10 +87,25 @@ fn main() -> Result<()> {
         Some(Commands::Snapshot(_)) => unreachable!(),
         Some(Commands::Status) => commands::status::run(&repo, &config),
         None => {
-            // Git passthrough mode
-            commands::passthrough::run(&cli.args, is_git_mode, disable_filter, &config, &repo)
+            if cli.args.is_empty() {
+                // Invoked as `agt` with no arguments — show agt help
+                Cli::parse_from(["agt", "--help"]);
+                Ok(())
+            } else {
+                // Git passthrough mode
+                commands::passthrough::run(&cli.args, is_git_mode, disable_filter, &config, &repo)
+            }
         }
     }
+}
+
+fn should_show_own_version(args: &[String]) -> bool {
+    std::env::var("AGT_SHOW_OWN_VERSION").is_ok()
+        && args.iter().any(|arg| arg == "--version" || arg == "-V")
+}
+
+fn print_own_version() {
+    println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
 }
 
 fn run_git_mode() -> Result<()> {

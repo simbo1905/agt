@@ -6,7 +6,13 @@ if (-not $env:AGT_TEST_REAL_GIT) {
 
 Write-Host "Diagnosing git.exe from runner PATH: $env:AGT_TEST_REAL_GIT"
 
-& $env:AGT_TEST_REAL_GIT --version
+$env:AGT_SHOW_OWN_VERSION = "1"
+try {
+  & $env:AGT_TEST_REAL_GIT --version
+}
+finally {
+  Remove-Item Env:AGT_SHOW_OWN_VERSION -ErrorAction SilentlyContinue
+}
 if ($LASTEXITCODE -ne 0) {
   throw "git --version failed"
 }

@@ -7,6 +7,7 @@ use predicates::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tempfile::Builder;
 use tempfile::TempDir;
 
 fn agt_bin() -> PathBuf {
@@ -22,9 +23,13 @@ fn agt_cmd_with_git() -> Result<AgtCommand, Box<dyn std::error::Error>> {
 }
 
 fn git_mode_cmd(tmp: &TempDir) -> Result<AgtCommand, Box<dyn std::error::Error>> {
-    let git_path = tmp
-        .path()
-        .join(format!("git{}", std::env::consts::EXE_SUFFIX));
+    // Place the fake git binary in a subdirectory so it is NOT in the repo
+    // working directory.  On Windows the CWD is implicitly on the search path,
+    // so putting agt-as-git next to the repo would cause `where.exe git.exe`
+    // inside the child process to find itself, creating an infinite recursion.
+    let bin_dir = tmp.path().join("_bin");
+    fs::create_dir_all(&bin_dir)?;
+    let git_path = bin_dir.join(format!("git{}", std::env::consts::EXE_SUFFIX));
     if !git_path.exists() {
         fs::copy(agt_bin(), &git_path)?;
         #[cfg(unix)]
@@ -35,11 +40,187 @@ fn git_mode_cmd(tmp: &TempDir) -> Result<AgtCommand, Box<dyn std::error::Error>>
             fs::set_permissions(&git_path, perms)?;
         }
     }
-    let mut cmd = AgtCommand::new(git_path);
+    let mut cmd = AgtCommand::new(&git_path);
     // In git mode, AGT spawns the real git and filters output
     cmd.env("AGT_GIT_PATH", find_real_git()?);
     cmd.env("AGT_WORKTREE_PATH", ensure_worktree_tool()?);
     Ok(cmd)
+}
+
+fn write_mock_git_executable(
+    path: &Path,
+    stdout: &str,
+    stderr: &str,
+    exit_code: i32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(unix)]
+    {
+        let script = format!(
+            "#!/bin/sh\nif [ -n \"{stderr}\" ]; then printf '%s\\n' \"{stderr}\" 1>&2; fi\nif [ -n \"{stdout}\" ]; then printf '%s\\n' \"{stdout}\"; fi\nexit {exit_code}\n"
+        );
+        fs::write(path, script)?;
+        let mut perms = fs::metadata(path)?.permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        fs::set_permissions(path, perms)?;
+    }
+
+    #[cfg(windows)]
+    {
+        let script = format!(
+            "@echo off\r\nif not \"{stderr}\"==\"\" echo {stderr} 1>&2\r\nif not \"{stdout}\"==\"\" echo {stdout}\r\nexit /b {exit_code}\r\n"
+        );
+        fs::write(path, script)?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_agt_no_args_shows_agt_help() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    gix::init(tmp.path())?;
+
+    let output = agt_cmd_with_git()?.current_dir(tmp.path()).output()?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(
+        stdout.contains("Agent Git Tool"),
+        "agt with no args should show agt help, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("git help -a"),
+        "agt with no args should NOT show git help, got: {stdout}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_git_mode_no_args_shows_git_help() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    gix::init(tmp.path())?;
+
+    let output = git_mode_cmd(&tmp)?.current_dir(tmp.path()).output()?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(
+        stdout.contains("usage: git") || stdout.contains("git help"),
+        "git mode with no args should show git help, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Agent Git Tool"),
+        "git mode with no args should NOT show agt help, got: {stdout}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_agt_mode_version_shows_own_version() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    gix::init(tmp.path())?;
+
+    let output = agt_cmd_with_git()?
+        .arg("--version")
+        .current_dir(tmp.path())
+        .output()?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    assert_eq!(stdout.trim(), format!("agt {}", env!("CARGO_PKG_VERSION")));
+
+    Ok(())
+}
+
+#[test]
+fn test_git_mode_version_delegates_to_host_git() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    gix::init(tmp.path())?;
+
+    #[cfg(unix)]
+    let mock_git_path = tmp.path().join("mock-git");
+    #[cfg(windows)]
+    let mock_git_path = tmp.path().join("mock-git.cmd");
+    write_mock_git_executable(&mock_git_path, "mock git version 9.9.9", "", 0)?;
+
+    let output = git_mode_cmd(&tmp)?
+        .arg("--version")
+        .env("AGT_GIT_PATH", &mock_git_path)
+        .current_dir(tmp.path())
+        .output()?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("mock git version 9.9.9"));
+    assert!(!stdout.contains(&format!("agt {}", env!("CARGO_PKG_VERSION"))));
+
+    Ok(())
+}
+
+#[test]
+fn test_git_mode_version_delegates_even_if_parent_path_contains_agt(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = Builder::new().prefix("agt-path-").tempdir()?;
+    assert!(tmp.path().display().to_string().contains("agt"));
+    gix::init(tmp.path())?;
+
+    #[cfg(unix)]
+    let mock_git_path = tmp.path().join("mock-git");
+    #[cfg(windows)]
+    let mock_git_path = tmp.path().join("mock-git.cmd");
+    write_mock_git_executable(&mock_git_path, "mock git version 9.9.9", "", 0)?;
+
+    let output = git_mode_cmd(&tmp)?
+        .arg("--version")
+        .env("AGT_GIT_PATH", &mock_git_path)
+        .current_dir(tmp.path())
+        .output()?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("mock git version 9.9.9"));
+    assert!(!stdout.contains(&format!("agt {}", env!("CARGO_PKG_VERSION"))));
+
+    Ok(())
+}
+
+#[test]
+fn test_agt_show_own_version_overrides_git_mode() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    gix::init(tmp.path())?;
+
+    #[cfg(unix)]
+    let mock_git_path = tmp.path().join("mock-git");
+    #[cfg(windows)]
+    let mock_git_path = tmp.path().join("mock-git.cmd");
+    write_mock_git_executable(&mock_git_path, "mock git version 9.9.9", "", 0)?;
+
+    let output = git_mode_cmd(&tmp)?
+        .arg("--version")
+        .env("AGT_GIT_PATH", &mock_git_path)
+        .env("AGT_SHOW_OWN_VERSION", "1")
+        .current_dir(tmp.path())
+        .output()?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    assert_eq!(stdout.trim(), format!("agt {}", env!("CARGO_PKG_VERSION")));
+    assert!(!stdout.contains("mock git version 9.9.9"));
+
+    Ok(())
+}
+
+#[test]
+fn test_agt_show_own_version_keeps_agt_mode_version() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    gix::init(tmp.path())?;
+
+    let output = agt_cmd_with_git()?
+        .arg("--version")
+        .env("AGT_SHOW_OWN_VERSION", "1")
+        .current_dir(tmp.path())
+        .output()?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    assert_eq!(stdout.trim(), format!("agt {}", env!("CARGO_PKG_VERSION")));
+
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -67,6 +248,74 @@ fn test_passthrough_uses_git_path() -> Result<(), Box<dyn std::error::Error>> {
 
     let stdout = String::from_utf8(output.stdout)?;
     assert!(stdout.contains("GIT-SENTINEL"));
+
+    Ok(())
+}
+
+#[test]
+fn test_passthrough_debug_log_records_successful_delegate() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = TempDir::new()?;
+    gix::init(tmp.path())?;
+
+    #[cfg(unix)]
+    let mock_git_path = tmp.path().join("mock-git");
+    #[cfg(windows)]
+    let mock_git_path = tmp.path().join("mock-git.cmd");
+
+    write_mock_git_executable(&mock_git_path, "GIT-SUCCESS", "", 0)?;
+
+    let debug_log = tmp.path().join("agt-debug.log");
+    let output = agt_cmd_with_git()?
+        .args(["branch"])
+        .env("AGT_GIT_PATH", &mock_git_path)
+        .env("AGT_DEBUG", "1")
+        .env("AGT_DEBUG_LOG", &debug_log)
+        .current_dir(tmp.path())
+        .output()?;
+
+    assert!(output.status.success());
+    let log = fs::read_to_string(&debug_log)?;
+    assert!(log.contains("passthrough: delegating to"));
+    assert!(log.contains(&mock_git_path.display().to_string()));
+    assert!(log.contains("args=[\"branch\"]"));
+    assert!(log.contains("passthrough: delegated command succeeded"));
+    assert!(log.contains("code=Some(0)"));
+
+    Ok(())
+}
+
+#[test]
+fn test_passthrough_debug_log_records_failed_delegate() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = TempDir::new()?;
+    gix::init(tmp.path())?;
+
+    #[cfg(unix)]
+    let mock_git_path = tmp.path().join("mock-git");
+    #[cfg(windows)]
+    let mock_git_path = tmp.path().join("mock-git.cmd");
+
+    write_mock_git_executable(&mock_git_path, "", "GIT-FAIL", 23)?;
+
+    let debug_log = tmp.path().join("agt-debug.log");
+    let output = agt_cmd_with_git()?
+        .args(["branch"])
+        .env("AGT_GIT_PATH", &mock_git_path)
+        .env("AGT_DEBUG", "1")
+        .env("AGT_DEBUG_LOG", &debug_log)
+        .current_dir(tmp.path())
+        .output()?;
+
+    assert_eq!(output.status.code(), Some(23));
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("GIT-FAIL"));
+
+    let log = fs::read_to_string(&debug_log)?;
+    assert!(log.contains("passthrough: delegating to"));
+    assert!(log.contains(&mock_git_path.display().to_string()));
+    assert!(log.contains("args=[\"branch\"]"));
+    assert!(log.contains("passthrough: delegated command failed"));
+    assert!(log.contains("code=Some(23)"));
 
     Ok(())
 }
