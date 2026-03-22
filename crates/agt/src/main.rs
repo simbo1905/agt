@@ -1,5 +1,7 @@
+use crate::logging::debug_log;
 use anyhow::{Context, Result};
 use clap::Parser;
+use std::path::Path;
 
 mod cli;
 mod commands;
@@ -7,6 +9,7 @@ mod config;
 mod filter;
 mod gix_cli;
 mod isolation;
+mod logging;
 mod path_util;
 mod scanner;
 mod snapshot;
@@ -14,9 +17,23 @@ mod snapshot;
 pub use cli::*;
 
 fn main() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let invoked_as = argv.first().cloned().unwrap_or_default();
+
+    logging::init(&invoked_as)?;
+
+    if should_show_own_version(argv.get(1..).unwrap_or(&[])) {
+        print_own_version();
+        return Ok(());
+    }
+
     // Dual-mode detection based on how the binary was invoked
-    let invoked_as = std::env::args().next().unwrap_or_default();
-    let is_git_mode = invoked_as.contains("git") && !invoked_as.contains("agt");
+    let invoked_name = Path::new(&invoked_as)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&invoked_as)
+        .to_ascii_lowercase();
+    let is_git_mode = invoked_name.contains("git") && !invoked_name.contains("agt");
 
     if is_git_mode {
         return run_git_mode();
@@ -74,13 +91,29 @@ fn main() -> Result<()> {
         Some(Commands::Snapshot(_)) => unreachable!(),
         Some(Commands::Status) => commands::status::run(&repo, &config),
         None => {
-            // Git passthrough mode
-            commands::passthrough::run(&cli.args, is_git_mode, disable_filter, &config, &repo)
+            if cli.args.is_empty() {
+                // Invoked as `agt` with no arguments — show agt help
+                Cli::parse_from(["agt", "--help"]);
+                Ok(())
+            } else {
+                // Git passthrough mode
+                commands::passthrough::run(&cli.args, is_git_mode, disable_filter, &config, &repo)
+            }
         }
     }
 }
 
+fn should_show_own_version(args: &[String]) -> bool {
+    std::env::var("AGT_SHOW_OWN_VERSION").is_ok()
+        && args.iter().any(|arg| arg == "--version" || arg == "-V")
+}
+
+fn print_own_version() {
+    println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+}
+
 fn run_git_mode() -> Result<()> {
+    debug_log("run_git_mode: start");
     // In git mode we do not use clap parsing of subcommands: we must accept arbitrary
     // git-style flags (e.g. `-c`, `--work-tree`, etc.) and pass them through.
     let mut args = Vec::<String>::new();
@@ -107,14 +140,18 @@ fn run_git_mode() -> Result<()> {
     }
 
     if let Some(dir) = directory {
+        debug_log(&format!("run_git_mode: chdir to {}", dir.display()));
         std::env::set_current_dir(&dir)
             .with_context(|| format!("Failed to change to directory: {}", dir.display()))?;
     }
 
     // Load configuration (from ~/.agtconfig and .agt/config)
+    debug_log("run_git_mode: loading config");
     let config = config::AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
 
+    debug_log("run_git_mode: discovering repo");
     let repo = gix::discover(".").with_context(|| "Failed to discover Git repository")?;
 
+    debug_log(&format!("run_git_mode: dispatch {:?}", args));
     commands::passthrough::run(&args, true, disable_filter, &config, &repo)
 }

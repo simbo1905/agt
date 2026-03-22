@@ -1,3 +1,4 @@
+use crate::logging::debug_log;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -7,8 +8,16 @@ pub fn find_git_binary() -> Result<PathBuf> {
     if let Ok(path) = std::env::var("AGT_GIT_PATH") {
         let candidate = PathBuf::from(&path);
         if candidate.exists() {
+            debug_log(&format!(
+                "find_git_binary: using AGT_GIT_PATH {}",
+                candidate.display()
+            ));
             return Ok(candidate);
         }
+        debug_log(&format!(
+            "find_git_binary: AGT_GIT_PATH does not exist {}",
+            candidate.display()
+        ));
     }
 
     // 2. Search PATH
@@ -19,9 +28,17 @@ pub fn find_git_binary() -> Result<PathBuf> {
                 .lines()
                 .find(|line| !line.trim().is_empty())
             {
+                debug_log(&format!(
+                    "find_git_binary: using where.exe result {}",
+                    path.trim()
+                ));
                 return Ok(PathBuf::from(path.trim()));
             }
         }
+        debug_log(&format!(
+            "find_git_binary: where.exe status {:?}",
+            output.status.code()
+        ));
     }
 
     #[cfg(not(windows))]
@@ -29,9 +46,14 @@ pub fn find_git_binary() -> Result<PathBuf> {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path.is_empty() {
+                debug_log(&format!("find_git_binary: using which result {}", path));
                 return Ok(PathBuf::from(path));
             }
         }
+        debug_log(&format!(
+            "find_git_binary: which status {:?}",
+            output.status.code()
+        ));
     }
 
     // 3. Fallback to common locations
@@ -48,10 +70,12 @@ pub fn find_git_binary() -> Result<PathBuf> {
     for path in fallbacks {
         let p = PathBuf::from(path);
         if p.exists() {
+            debug_log(&format!("find_git_binary: using fallback {}", p.display()));
             return Ok(p);
         }
     }
 
+    debug_log("find_git_binary: failed to resolve git binary");
     anyhow::bail!("git binary not found; set AGT_GIT_PATH or ensure git is in PATH")
 }
 

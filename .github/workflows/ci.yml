@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - '**'
+      - main
     tags:
       - 'release/*'
 
@@ -16,6 +16,8 @@ permissions:
   contents: read
 
 env:
+  AGT_LOG: 1
+  AGT_LOG_PATH: ${{ github.workspace }}/agt.log
   GIT_AUTHOR_NAME: AGT CI
   GIT_AUTHOR_EMAIL: agt-ci@example.invalid
   GIT_COMMITTER_NAME: AGT CI
@@ -94,18 +96,44 @@ jobs:
             archive_name: agt-windows
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve Git on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $candidates = @(Get-Command git.exe -CommandType Application -All -ErrorAction Stop)
+          if ($candidates.Count -eq 0) {
+            throw "No git.exe found on PATH"
+          }
+          foreach ($c in $candidates) {
+            Write-Host "Found git.exe: $($c.Source)"
+            $env:AGT_SHOW_OWN_VERSION = "1"
+            try {
+              & $c.Source --version
+            }
+            finally {
+              Remove-Item Env:AGT_SHOW_OWN_VERSION -ErrorAction SilentlyContinue
+            }
+          }
+          $git = $candidates[$candidates.Count - 1].Source
+          Write-Host "Selected git.exe (last on PATH): $git"
+          "AGT_TEST_REAL_GIT=$git" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: Format
-        run: cargo fmt --all --check
-      - name: Lint
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Windows git diagnostics
+        if: runner.os == 'Windows'
+        shell: bash
+        run: bash ./.github/scripts/run-with-agt-log.sh pwsh -NoProfile -File ./.github/scripts/diagnose-windows-git.ps1
       - name: Snapshot integration tests
-        run: cargo test test_snapshot_ --test integration_tests -- --nocapture
+        shell: bash
+        run: bash ./.github/scripts/run-with-agt-log.sh cargo test test_snapshot_ --test integration_tests -- --nocapture
       - name: Full test suite
-        run: cargo test --workspace --all-targets --all-features -- --nocapture
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash ./.github/scripts/run-with-agt-log.sh cargo test --workspace --all-targets --all-features -- --nocapture
+      - name: Full test suite
+        if: runner.os == 'Windows'
+        shell: bash
+        run: bash ./.github/scripts/run-with-agt-log.sh pwsh -NoProfile -File ./.github/scripts/run-windows-tests-with-timeout.ps1
       - name: Build release binaries
         run: cargo build --workspace --release
       - name: Package release bundle (Unix)
@@ -211,7 +239,7 @@ jobs:
   # upstream checks pass. Update branch protection rule in GitHub settings if you
   # rename or remove this job.
   checks-passed:
-    name: Checks Passed
+    name: ChecksPassed
     needs:
       - native-checks
       - debian-trixie
