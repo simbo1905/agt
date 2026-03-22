@@ -1,3 +1,4 @@
+use crate::path_util;
 use anyhow::{Context, Result};
 use gix::object::tree::EntryKind;
 use gix::{bstr::BStr, bstr::BString, bstr::ByteSlice, Repository};
@@ -209,10 +210,8 @@ fn stage_paths(
     work_dir: &Path,
     paths: &[PathBuf],
 ) -> Result<()> {
-    let cwd = std::env::current_dir()?;
-    let work_dir_canon = work_dir
-        .canonicalize()
-        .unwrap_or_else(|_| work_dir.to_path_buf());
+    let cwd = path_util::canonicalize_or_original(&std::env::current_dir()?);
+    let work_dir_canon = path_util::canonicalize_or_original(work_dir);
     let mut seen = HashSet::new();
 
     for path in paths {
@@ -221,9 +220,12 @@ fn stage_paths(
         } else {
             cwd.join(path)
         };
+        let abs_canon = path_util::canonicalize_or_original(&abs);
 
-        let rel = abs
+        let rel = abs_canon
             .strip_prefix(&work_dir_canon)
+            .or_else(|_| abs.strip_prefix(&work_dir_canon))
+            .or_else(|_| abs_canon.strip_prefix(work_dir))
             .or_else(|_| abs.strip_prefix(work_dir))
             .with_context(|| format!("Path is outside repository: {}", abs.display()))?
             .to_path_buf();

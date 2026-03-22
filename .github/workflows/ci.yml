@@ -1,0 +1,266 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'release/*'
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GIT_AUTHOR_NAME: AGT CI
+  GIT_AUTHOR_EMAIL: agt-ci@example.invalid
+  GIT_COMMITTER_NAME: AGT CI
+  GIT_COMMITTER_EMAIL: agt-ci@example.invalid
+
+jobs:
+  release-meta:
+    name: Release Metadata
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.meta.outputs.publish }}
+      release_kind: ${{ steps.meta.outputs.release_kind }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_title: ${{ steps.meta.outputs.release_title }}
+      binary_suffix: ${{ steps.meta.outputs.binary_suffix }}
+      asset_suffix: ${{ steps.meta.outputs.asset_suffix }}
+      release_notes: ${{ steps.meta.outputs.release_notes }}
+    steps:
+      - id: meta
+        name: Compute release metadata
+        shell: bash
+        run: |
+          publish=false
+          release_kind=none
+          release_tag=
+          release_title=
+          binary_suffix=
+          asset_suffix=
+          release_notes=
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            short_sha="${GITHUB_SHA::12}"
+            publish=true
+            release_kind=nightly
+            release_tag=nightly
+            release_title="Nightly ${short_sha}"
+            binary_suffix="${short_sha}"
+            asset_suffix="${short_sha}"
+            release_notes="Draft nightly release from main at ${GITHUB_SHA}."
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/tags/release/* ]]; then
+            version="${GITHUB_REF_NAME#release/}"
+            publish=true
+            release_kind=semver
+            release_tag="${GITHUB_REF_NAME}"
+            release_title="${version}"
+            binary_suffix="${version}"
+            asset_suffix="${version}"
+            release_notes="Draft release for tag ${GITHUB_REF_NAME}."
+          fi
+
+          {
+            echo "publish=${publish}"
+            echo "release_kind=${release_kind}"
+            echo "release_tag=${release_tag}"
+            echo "release_title=${release_title}"
+            echo "binary_suffix=${binary_suffix}"
+            echo "asset_suffix=${asset_suffix}"
+            echo "release_notes=${release_notes}"
+          } >> "$GITHUB_OUTPUT"
+
+  native-checks:
+    name: ${{ matrix.name }}
+    needs: release-meta
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            runner: macos-latest
+            artifact_name: macos
+            archive_name: agt-macos
+          - name: Windows
+            runner: windows-latest
+            artifact_name: windows
+            archive_name: agt-windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Snapshot integration tests
+        run: cargo test test_snapshot_ --test integration_tests -- --nocapture
+      - name: Full test suite
+        run: cargo test --workspace --all-targets --all-features -- --nocapture
+      - name: Build release binaries
+        run: cargo build --workspace --release
+      - name: Package release bundle (Unix)
+        if: runner.os != 'Windows' && needs.release-meta.outputs.publish == 'true'
+        id: package-unix
+        shell: bash
+        env:
+          BINARY_SUFFIX: ${{ needs.release-meta.outputs.binary_suffix }}
+          ASSET_SUFFIX: ${{ needs.release-meta.outputs.asset_suffix }}
+          ARCHIVE_NAME: ${{ matrix.archive_name }}
+        run: |
+          staging="dist/release/${{ matrix.artifact_name }}"
+          mkdir -p "$staging"
+          cp target/release/agt "$staging/agt-${BINARY_SUFFIX}"
+          cp target/release/agt-worktree "$staging/agt-worktree-${BINARY_SUFFIX}"
+          archive="dist/${ARCHIVE_NAME}-${ASSET_SUFFIX}.tar.gz"
+          tar -C "$staging" -czf "$archive" .
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+      - name: Package release bundle (Windows)
+        if: runner.os == 'Windows' && needs.release-meta.outputs.publish == 'true'
+        id: package-windows
+        shell: pwsh
+        env:
+          BINARY_SUFFIX: ${{ needs.release-meta.outputs.binary_suffix }}
+          ASSET_SUFFIX: ${{ needs.release-meta.outputs.asset_suffix }}
+          ARCHIVE_NAME: ${{ matrix.archive_name }}
+        run: |
+          $staging = "dist/release/${{ matrix.artifact_name }}"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          Copy-Item "target/release/agt.exe" "$staging/agt-$env:BINARY_SUFFIX.exe"
+          Copy-Item "target/release/agt-worktree.exe" "$staging/agt-worktree-$env:BINARY_SUFFIX.exe"
+          $archive = "dist/$env:ARCHIVE_NAME-$env:ASSET_SUFFIX.zip"
+          Compress-Archive -Path "$staging/*" -DestinationPath $archive -Force
+          "archive=$archive" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Upload release bundle (Unix)
+        if: runner.os != 'Windows' && needs.release-meta.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.artifact_name }}
+          path: ${{ steps.package-unix.outputs.archive }}
+          if-no-files-found: error
+      - name: Upload release bundle (Windows)
+        if: runner.os == 'Windows' && needs.release-meta.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.artifact_name }}
+          path: ${{ steps.package-windows.outputs.archive }}
+          if-no-files-found: error
+
+  debian-trixie:
+    name: Debian Trixie
+    needs: release-meta
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl build-essential pkg-config git make
+      - name: Install Rust toolchain
+        run: |
+          curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --component clippy,rustfmt
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Snapshot integration tests
+        run: cargo test test_snapshot_ --test integration_tests -- --nocapture
+      - name: Full test suite
+        run: cargo test --workspace --all-targets --all-features -- --nocapture
+      - name: Build release binaries
+        run: cargo build --workspace --release
+      - name: Package release bundle
+        if: needs.release-meta.outputs.publish == 'true'
+        id: package
+        shell: bash
+        env:
+          BINARY_SUFFIX: ${{ needs.release-meta.outputs.binary_suffix }}
+          ASSET_SUFFIX: ${{ needs.release-meta.outputs.asset_suffix }}
+        run: |
+          staging="dist/release/debian-trixie"
+          mkdir -p "$staging"
+          cp target/release/agt "$staging/agt-${BINARY_SUFFIX}"
+          cp target/release/agt-worktree "$staging/agt-worktree-${BINARY_SUFFIX}"
+          archive="dist/agt-debian-trixie-${ASSET_SUFFIX}.tar.gz"
+          tar -C "$staging" -czf "$archive" .
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+      - name: Upload release bundle
+        if: needs.release-meta.outputs.publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-debian-trixie
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+  # This job serves as the single, stable gate for branch protection on `main`.
+  # GitHub branch protection requires specific status check names, and this job
+  # decouples the protection rule from the dynamic matrix job names (macOS, Windows,
+  # Debian Trixie). The job has no native logic; it simply succeeds when all
+  # upstream checks pass. Update branch protection rule in GitHub settings if you
+  # rename or remove this job.
+  checks-passed:
+    name: Checks Passed
+    needs:
+      - native-checks
+      - debian-trixie
+    runs-on: ubuntu-latest
+    steps:
+      - name: All required checks passed
+        run: true
+
+  publish-release:
+    name: Publish Draft Release
+    needs:
+      - release-meta
+      - checks-passed
+    if: needs.release-meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-assets
+      - name: Create or refresh draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_KIND: ${{ needs.release-meta.outputs.release_kind }}
+          RELEASE_NOTES: ${{ needs.release-meta.outputs.release_notes }}
+          RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
+          RELEASE_TITLE: ${{ needs.release-meta.outputs.release_title }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if [[ "$RELEASE_KIND" == "nightly" ]]; then
+              gh release delete "$RELEASE_TAG" --yes --cleanup-tag
+            else
+              gh release delete "$RELEASE_TAG" --yes
+            fi
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TITLE" \
+            --notes "$RELEASE_NOTES" \
+            --draft
+      - name: Upload draft release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
+        shell: bash
+        run: |
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber

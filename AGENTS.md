@@ -3,9 +3,9 @@
 You MAY backup files and take them out of the src try by performing a `mv x .tmp/`.
 You MUST NOT reset state using git. 
 You MUST NOT rm files that are not in git (see the you MAY mv files rule).
-You MAY use `git rm` of a file that is committe but you MUST NOT force delete a file from the index.
-You SHOUlD not assume you are the only person or agent making edits.
-You MUST understand that `tidyup` or `get rid of` said by the user means move out of the source tree into .tmp.
+You MAY use `git rm` of a file that is committed, but you MUST NOT force delete a file from the index.
+You SHOULD not assume you are the only person or agent making edits.
+You MUST understand that `tidyup` or `get rid of`, as said by the user, means moving out of the source tree into `.tmp`; it does not mean you can hard delete work or violate the rules above. 
 
 This document provides guidance for AI coding agents working on the AGT monorepo.
 
@@ -13,12 +13,20 @@ This document provides guidance for AI coding agents working on the AGT monorepo
 
 This is a polyglot monorepo containing tools for AI agent session management. Tool versions are managed with [mise](https://mise.jdx.dev/).
 
-**Primary deliverable**: The `agt` binary - a Rust tool that wraps the host git binary.
+**Primary deliverable**: The `agt` binary - a tool that wraps the host git binary.
 
 ## Documentation as Target State
 
 - The documentation (especially `README.md` and `docs/agt.1.txt`) must always describe the target/final state, not the previous state.
 - During reviews, do not rely on or keep any documentation other than the final state; the PR must be merged with the README that served as the specification for the work done.
+
+## Small MIT Dependencies
+
+- If a dependency is tiny and MIT-licensed, ask whether the user prefers copying the code into the repo instead of adding a new dependency.
+- When inlining third-party MIT code, add a short source/license comment above the copied code in the style already used in this repo.
+- When inlining third-party MIT code, add a matching notice block to the bottom of the root `LICENSE` file.
+- Test-only dependencies should be kept below the fold in `Cargo.toml` and are not candidates for inlining.
+- Avoid npm-like dependency sprawl; every dependency that ships in the final binary must carry its own weight as a first-class part of the tool.
 
 ## Project Structure
 
@@ -28,8 +36,7 @@ agt/
 ├── vendor/
 │   └── toybox/         # toybox submodule for chroot jails
 ├── crates/
-│   ├── agt/            # Main Rust crate
-│   │   ├── Cargo.toml
+│   ├── agt/            # Main agt crate
 │   │   └── src/
 │   │       ├── main.rs
 │   │       ├── cli.rs        # Command-line parsing (clap)
@@ -178,15 +185,6 @@ Agents should:
 - Run `setup.sh` before starting a suite.
 - Use `check.sh` to validate pass/fail criteria.
 - Report mismatches between tool behavior and `docs/agt.1.txt` in **Suite 9**.
-
-## Dependencies
-
-Primary Rust crates:
-- `gix` (gitoxide) - Git object/tree operations
-- `clap` - CLI parsing
-- `jwalk` or `walkdir` - Fast filesystem traversal
-- `chrono` - Timestamp handling
-- `tempfile` - Test fixtures
 
 ## Build Commands
 

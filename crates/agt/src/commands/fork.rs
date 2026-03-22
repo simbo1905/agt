@@ -1,6 +1,7 @@
 use crate::config::AgtConfig;
 use crate::gix_cli::{find_worktree_binary, repo_base_path};
 use crate::isolation::SessionPaths;
+use crate::path_util;
 use anyhow::{Context, Result};
 use gix::Repository;
 use gix_ref::transaction::PreviousValue;
@@ -56,12 +57,8 @@ pub fn run(
     )?;
 
     // 3. Create session folder structure
-    let repo_work_dir = repo
-        .work_dir()
-        .context("No working directory found")?;
-    let session_root = repo_work_dir
-        .join("sessions")
-        .join(session_id);
+    let repo_work_dir = repo.work_dir().context("No working directory found")?;
+    let session_root = repo_work_dir.join("sessions").join(session_id);
 
     std::fs::create_dir_all(
         session_root
@@ -88,9 +85,7 @@ pub fn run(
         .status()
         .context("Failed to create sandbox")?;
     if !status.success() {
-        return Err(anyhow::anyhow!(
-            "Failed to create sandbox for {session_id}"
-        ));
+        return Err(anyhow::anyhow!("Failed to create sandbox for {session_id}"));
     }
 
     // 5. Initialize timestamp and metadata
@@ -106,12 +101,11 @@ pub fn run(
     let sessions_dir = agt_dir.join("sessions");
     std::fs::create_dir_all(&sessions_dir)?;
     let session_file = sessions_dir.join(format!("{session_id}.json"));
-    
+
     let session = SessionMetadata {
         session_id: session_id.to_string(),
         branch: branch_name.clone(),
-        sandbox: std::fs::canonicalize(&paths.sandbox)
-            .unwrap_or(paths.sandbox.clone())
+        sandbox: path_util::canonicalize_or_original(&paths.sandbox)
             .display()
             .to_string(),
         from: start_commit.id.to_string(),

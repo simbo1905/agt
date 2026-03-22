@@ -25,7 +25,7 @@ impl AgtConfig {
         let mut config = Self::default();
 
         // Read global config first: ~/.agtconfig
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home_dir() {
             let global_path = home.join(".agtconfig");
             if global_path.exists() {
                 let global_settings = parse_ini_file(&global_path)?;
@@ -54,7 +54,7 @@ impl AgtConfig {
         let mut config = Self::default();
 
         // For init, only read global config (repo doesn't exist yet)
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home_dir() {
             let global_path = home.join(".agtconfig");
             if global_path.exists() {
                 if let Ok(global_settings) = parse_ini_file(&global_path) {
@@ -69,6 +69,40 @@ impl AgtConfig {
         }
 
         config
+    }
+}
+
+// This home-directory lookup is adapted from the behavior documented by the
+// `dirs` crate: <https://crates.io/crates/dirs>
+// Repository: <https://github.com/soc/dirs-rs>
+// Original copyright: Copyright (c) 2018-2019 dirs-rs contributors
+// License used here: MIT
+// Modified from original to inline only the tiny home-directory logic AGT uses.
+// See the root LICENSE file for the full third-party notice.
+fn home_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("USERPROFILE")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                let drive = std::env::var_os("HOMEDRIVE")?;
+                let path = std::env::var_os("HOMEPATH")?;
+                if drive.is_empty() || path.is_empty() {
+                    None
+                } else {
+                    let mut home = PathBuf::from(drive);
+                    home.push(path);
+                    Some(home)
+                }
+            })
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
     }
 }
 

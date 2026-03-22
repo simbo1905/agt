@@ -1,4 +1,4 @@
-# Suite 9: Documentation Audit
+# Suite 0: Documentation Audit
 
 ## Objective
 
@@ -6,7 +6,7 @@ Verify that the tool behaves EXACTLY as documented in `docs/agt.1.txt`. If there
 
 ## Working Directory
 
-`.tmp/suite9`
+`.tmp/suite0`
 
 ## Setup
 

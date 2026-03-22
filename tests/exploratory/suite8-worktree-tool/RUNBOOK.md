@@ -1,4 +1,4 @@
-# Suite 10: Worktree Helper Tool
+# Suite 8: Worktree Helper Tool
 
 ## Objective
 
@@ -7,7 +7,7 @@ for a bare repository in the vanilla case.
 
 ## Working Directory
 
-`.tmp/suite10`
+`.tmp/suite8`
 
 ## Setup
 
