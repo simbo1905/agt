@@ -168,4 +168,14 @@ fn debug_log(message: &str) {
     if debug_enabled() {
         eprintln!("[agt] {message}");
     }
+    if let Ok(path) = std::env::var("AGT_DEBUG_LOG") {
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .and_then(|mut file| {
+                use std::io::Write;
+                writeln!(file, "[agt] {message}")
+            });
+    }
 }

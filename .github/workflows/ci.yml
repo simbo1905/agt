@@ -111,7 +111,19 @@ jobs:
         if: runner.os == 'Windows'
         env:
           AGT_DEBUG: 1
+          AGT_DEBUG_LOG: ${{ runner.temp }}/agt-debug.log
         run: cargo test --workspace --all-targets --all-features -- --nocapture --test-threads=1
+      - name: Dump Windows AGT debug log
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "agt-debug.log"
+          if (Test-Path $log) {
+            Write-Host "--- AGT debug log ---"
+            Get-Content $log
+          } else {
+            Write-Host "No AGT debug log found"
+          }
       - name: Build release binaries
         run: cargo build --workspace --release
       - name: Package release bundle (Unix)
