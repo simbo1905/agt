@@ -32,6 +32,7 @@ jobs:
       release_kind: ${{ steps.meta.outputs.release_kind }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
       release_title: ${{ steps.meta.outputs.release_title }}
+      build_date: ${{ steps.meta.outputs.build_date }}
       binary_suffix: ${{ steps.meta.outputs.binary_suffix }}
       asset_suffix: ${{ steps.meta.outputs.asset_suffix }}
       release_notes: ${{ steps.meta.outputs.release_notes }}
@@ -44,12 +45,14 @@ jobs:
           release_kind=none
           release_tag=
           release_title=
+          build_date=
           binary_suffix=
           asset_suffix=
           release_notes=
 
           if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
             short_sha="${GITHUB_SHA::12}"
+            build_date="$(date -u +%Y.%m.%d)"
             publish=true
             release_kind=nightly
             release_tag=nightly
@@ -59,13 +62,13 @@ jobs:
             release_notes="Draft nightly release from main at ${GITHUB_SHA}."
           elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/tags/release/* ]]; then
             version="${GITHUB_REF_NAME#release/}"
-            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$ ]]; then
               echo "ERROR: Tag version '$version' is not semver compliant. Use format: release/X.Y.Z or release/X.Y.Z-suffix"
               exit 1
             fi
             publish=true
             release_kind=semver
-            release_tag="${GITHUB_REF_NAME}"
+            release_tag="${version}"
             release_title="${version}"
             binary_suffix="${version}"
             asset_suffix="${version}"
@@ -77,6 +80,7 @@ jobs:
             echo "release_kind=${release_kind}"
             echo "release_tag=${release_tag}"
             echo "release_title=${release_title}"
+            echo "build_date=${build_date}"
             echo "binary_suffix=${binary_suffix}"
             echo "asset_suffix=${asset_suffix}"
             echo "release_notes=${release_notes}"
@@ -86,6 +90,9 @@ jobs:
     name: ${{ matrix.name }}
     needs: release-meta
     runs-on: ${{ matrix.runner }}
+    env:
+      AGT_BUILD_CHANNEL: ${{ needs.release-meta.outputs.release_kind == 'nightly' && 'nightly' || '' }}
+      AGT_BUILD_DATE: ${{ needs.release-meta.outputs.build_date }}
     strategy:
       fail-fast: false
       matrix:
@@ -100,6 +107,8 @@ jobs:
             archive_name: agt-windows
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Resolve Git on Windows
         if: runner.os == 'Windows'
         shell: pwsh
@@ -191,10 +200,15 @@ jobs:
     name: Debian Trixie
     needs: release-meta
     runs-on: ubuntu-latest
+    env:
+      AGT_BUILD_CHANNEL: ${{ needs.release-meta.outputs.release_kind == 'nightly' && 'nightly' || '' }}
+      AGT_BUILD_DATE: ${{ needs.release-meta.outputs.build_date }}
     container:
       image: debian:trixie
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install system dependencies
         run: |
           apt-get update

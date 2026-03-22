@@ -48,6 +48,11 @@ fn main() -> Result<()> {
             .with_context(|| format!("Failed to change to directory: {}", dir.display()))?;
     }
 
+    // Handle commands that do not require an existing repository.
+    if let Some(Commands::Setup { store }) = cli.command.clone() {
+        return snapshot::setup(store.as_deref());
+    }
+
     // Handle init command before discovering repo (init doesn't need existing repo)
     if let Some(Commands::Clone { remote_url, path }) = cli.command.clone() {
         let config = config::AgtConfig::load_for_init();
@@ -69,6 +74,7 @@ fn main() -> Result<()> {
 
     // Route to appropriate command handler
     match cli.command {
+        Some(Commands::Setup { .. }) => unreachable!(),
         Some(Commands::Clone { .. }) => unreachable!(), // handled above
         Some(Commands::Session(session_cmd)) => commands::session::run(&repo, session_cmd, &config),
         Some(Commands::Autocommit {
@@ -109,7 +115,7 @@ fn should_show_own_version(args: &[String]) -> bool {
 }
 
 fn print_own_version() {
-    println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    println!("{} {}", env!("CARGO_PKG_NAME"), env!("AGT_BUILD_VERSION"));
 }
 
 fn run_git_mode() -> Result<()> {

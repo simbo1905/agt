@@ -86,6 +86,31 @@ CONFIGURATION
 COMMANDS
    AGT-SPECIFIC COMMANDS (agt mode only)
 
+       agt setup [--store <path>]
+              Bootstrap standalone snapshot storage for the current directory.
+
+              This command:
+              1. Resolves the standalone snapshot store path
+              2. Creates the store directory if it does not already exist
+              3. If inside a Git worktree, ensures the store is ignored relative
+                 to the repository root
+              4. Leaves existing configuration unchanged when setup is already in place
+
+              By default the store is `.agt-snapshots/` under the current working
+              directory. If `--store` is provided, that path is used instead.
+
+              If the chosen store path is inside the current Git repository, agt
+              ensures the repository root `.gitignore` contains an entry for that
+              store path. If the store path is outside the repository, agt does not
+              edit `.gitignore`.
+
+              This command is intentionally narrow in scope. It only bootstraps the
+              standalone snapshot store and related ignore entry; it does not create
+              or update unrelated AGT configuration.
+
+              Options:
+                  --store <path>         Snapshot store directory to bootstrap
+
        agt clone <remote-url> [--path <directory>]
               Clone a remote repository into an agt-managed structure. This command:
 
@@ -234,10 +259,11 @@ COMMANDS
               5. Records additional filesystem metadata in a snapshot manifest blob
               6. Creates an annotated tag named from the Unix epoch of the snapshot
 
-              By default the snapshot store lives in .agt-snapshots/ under the
-              current working directory. The store location can be overridden by
-              --store or AGT_SNAPSHOT_STORE. agt warns if the chosen store path is
-              not ignored by Git.
+               By default the snapshot store lives in .agt-snapshots/ under the
+               current working directory. The store location can be overridden by
+               --store or AGT_SNAPSHOT_STORE. agt warns if the chosen store path is
+               not ignored by Git. `agt setup` can create the store and ensure the
+               default or chosen in-repo store path is ignored before the first save.
 
               The snapshot manifest records, at minimum:
               • object_id
@@ -253,13 +279,15 @@ COMMANDS
                   --store <path>         Snapshot store directory
                   -m, --message <text>   Annotated tag message
 
-       agt snapshot check --before <tag> --after <tag> [--store <path>]
-              Compare two saved standalone snapshots and report added, deleted,
-              and modified paths.
+       agt snapshot diff <snapshot-a> <snapshot-b> [--store <path>]
+              Compare two saved standalone snapshots and report deleted, modified,
+              and added paths.
+
+              The two snapshot identifiers are positional arguments. Swapping them
+              is allowed; it only changes which direction additions and deletions
+              are reported.
 
               Options:
-                  --before <tag>         Earlier snapshot tag (required)
-                  --after <tag>          Later snapshot tag (required)
                   --store <path>         Snapshot store directory
 
        agt snapshot status [-q] [-q] [--store <path>]
@@ -381,6 +409,13 @@ OPTIONS
        --version
                When invoked as `agt`, print agt's own version string.
 
+               The reported version is embedded at build time:
+               - release tags `release/X.Y.Z` or `release/X.Y.Z-suffix`
+                 report `X.Y.Z` or `X.Y.Z-suffix`
+               - nightly builds from `main` report `YYYY.MM.DD-<shortsha>`
+               - local development builds report `<cargo-base-version>-<shortsha>`
+                 and append `+dirty` when the worktree or index is dirty
+
                When invoked as `git`, delegate `--version` to the configured
                real git binary so the reported version matches the host git.
 
@@ -473,11 +508,17 @@ EXAMPLES
         Auto-commit agent changes:
                $ agt autocommit -C sessions/agent-001 --session-id agent-001
 
+        Bootstrap the default standalone snapshot store for the current repository:
+               $ agt setup
+
+        Bootstrap a custom standalone snapshot store path:
+               $ agt setup --store tmp/agt-store
+
         Save a standalone snapshot of the current tree:
                $ agt snapshot save -m "before agent run"
 
         Compare two standalone snapshots:
-               $ agt snapshot check --before 01739800000000000000 --after 01739800001234567890
+               $ agt snapshot diff 01739800000000000000 01739800001234567890
 
         Ask whether anything changed since the latest standalone snapshot:
                $ agt snapshot status -q

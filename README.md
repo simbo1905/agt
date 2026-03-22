@@ -53,13 +53,14 @@ A dual-mode Git wrapper that spawns the host git binary and filters its output:
 - **As `agt`**: Full visibility plus session management commands
 
 Key commands:
+- `agt setup` - Create standalone snapshot storage and gitignore it when appropriate
 - `agt clone <url>` - Clone remote repo into agt-managed structure
 - `agt session new [--id <id>]` - Create new agent session
 - `agt session export` - Push user branch to remote origin
 - `agt session remove --id <id>` - Remove a session
 - `agt autocommit --session-id <id>` - Capture session shadow history
 - `agt snapshot save` - Save a standalone filesystem snapshot into an isolated store
-- `agt snapshot check` - Compare two standalone snapshots
+- `agt snapshot diff <snapshot-a> <snapshot-b>` - Compare two standalone snapshots
 - `agt snapshot status` - Compare the current tree against the latest standalone snapshot
 - `agt snapshot restore` - Restore all or part of a saved standalone snapshot
 
@@ -73,6 +74,8 @@ AGT now uses the word "snapshot" in two different namespaces:
 - **Standalone snapshots** come from `agt snapshot ...` and live in a separate snapshot store, defaulting to `.agt-snapshots/` in the current working directory.
 
 Standalone snapshots are designed for answering "what changed?" across generated output and ignored files without interfering with normal Git history or AGT session flows.
+
+Use `agt setup` to bootstrap the standalone snapshot store before the first snapshot. By default it creates `.agt-snapshots/` in the current directory and, when running inside a Git repository, ensures the repository root `.gitignore` ignores that store. `agt setup --store <path>` bootstraps a custom store path instead.
 
 ## Configuration
 
@@ -129,6 +132,9 @@ agt autocommit -C sessions/agent-001 --session-id agent-001
 # Export user branch to remote
 agt session export --session-id agent-001
 
+# Bootstrap standalone snapshot storage
+agt setup
+
 # Save a standalone snapshot before running an agent
 agt snapshot save -m "before run"
 
@@ -168,6 +174,15 @@ make build            # Build all binaries to dist/
 After building, binaries are in `dist/`:
 - `dist/agt` - Host-side AGT CLI
 - `dist/agt-worktree` - Sandbox helper used inside agent sessions
+
+### Build Versioning
+
+AGT follows a strict Git-tag-driven semantic versioning policy.
+
+- For the full `--version` contract and build-version rules, see
+  [docs/agt.1.txt](docs/agt.1.txt).
+- For the release and nightly publishing workflow, see
+  [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 Run AGT from the `dist/` folder or add it to your PATH:
 

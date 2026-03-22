@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "agt")]
 #[command(about = "Agent Git Tool - AI agent session management with immutable snapshots")]
-#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(version = env!("AGT_BUILD_VERSION"))]
 pub struct Cli {
     /// Disable agt filtering (git mode only)
     #[arg(long, global = true)]
@@ -25,6 +25,13 @@ pub struct Cli {
 
 #[derive(Subcommand, Clone)]
 pub enum Commands {
+    /// Bootstrap standalone snapshot storage for the current directory
+    Setup {
+        /// Snapshot store directory to create
+        #[arg(long)]
+        store: Option<PathBuf>,
+    },
+
     /// Clone a remote repository into agt-managed structure
     Clone {
         /// Remote repository URL
@@ -77,13 +84,13 @@ pub enum SnapshotCommands {
         message: Option<String>,
     },
 
-    /// Compare two saved snapshots
-    Check {
-        /// Earlier snapshot tag name
-        #[arg(long)]
+    /// Compare two saved snapshots and report deleted, modified, and added paths
+    Diff {
+        /// Earlier snapshot tag (or newer if you want additions reported as deletions)
+        #[arg(value_name = "snapshot-a")]
         before: String,
-        /// Later snapshot tag name
-        #[arg(long)]
+        /// Later snapshot tag (or older if you want deletions reported as additions)
+        #[arg(value_name = "snapshot-b")]
         after: String,
         /// Override snapshot store location
         #[arg(long)]
@@ -98,6 +105,13 @@ pub enum SnapshotCommands {
         /// Reduce output; repeat for no output and exit status only
         #[arg(short = 'q', action = ArgAction::Count)]
         quiet: u8,
+    },
+
+    /// List saved standalone snapshots
+    List {
+        /// Override snapshot store location
+        #[arg(long)]
+        store: Option<PathBuf>,
     },
 
     /// Restore files from a saved snapshot

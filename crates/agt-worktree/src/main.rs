@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicBool;
 #[derive(Parser)]
 #[command(name = "agt-worktree")]
 #[command(about = "Minimal worktree add/remove helper for agt")]
-#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(version = env!("AGT_BUILD_VERSION"))]
 struct Cli {
     #[command(subcommand)]
     command: Command,
