@@ -194,25 +194,57 @@ pub fn status(_repo: &Repository, store: Option<&Path>, quiet: u8) -> Result<()>
     Ok(())
 }
 
-pub fn list(_repo: &Repository, store: Option<&Path>) -> Result<()> {
+pub fn list(_repo: &Repository, store: Option<&Path>, quiet: u8) -> Result<()> {
     ensure_supported_platform()?;
     let current_dir = std::env::current_dir()?;
     let store_path = resolve_store_path(store, &current_dir)?;
     let snapshot_repo = open_snapshot_repo(&store_path)?;
 
-    let mut tags: Vec<String> = Vec::new();
-    for reference in snapshot_repo.references()?.tags()? {
-        let reference = reference.map_err(|err| anyhow::anyhow!(err.to_string()))?;
+    let mut tags: Vec<(String, Option<String>)> = Vec::new();
+    for reference_result in snapshot_repo.references()?.tags()? {
+        let mut reference = reference_result.map_err(|err| anyhow::anyhow!(err.to_string()))?;
         let full_name = reference.name().as_bstr().to_string();
         let Some(short_name) = full_name.strip_prefix("refs/tags/") else {
             continue;
         };
-        tags.push(short_name.to_string());
+
+        let tag_name = short_name.to_string();
+        let message = if quiet == 0 {
+            if let Ok(commit) = reference.peel_to_commit() {
+                commit.message_raw().ok().and_then(|commit_message| {
+                    commit_message.to_string().lines().next().and_then(|s| {
+                        let trimmed = s.trim_end();
+                        if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed.to_string())
+                        }
+                    })
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        tags.push((tag_name, message));
     }
 
-    tags.sort();
-    for tag in &tags {
-        println!("{tag}");
+    tags.sort_by(|a, b| a.0.cmp(&b.0));
+
+    if quiet > 0 {
+        for (tag, _) in &tags {
+            println!("{tag}");
+        }
+    } else {
+        for (tag, msg) in &tags {
+            if let Some(message) = msg {
+                println!("{tag}  {message}");
+            } else {
+                println!("{tag}");
+            }
+        }
     }
     println!("\n{} snapshot(s)", tags.len());
     Ok(())

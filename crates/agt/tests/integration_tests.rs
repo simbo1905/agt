@@ -659,6 +659,74 @@ fn test_snapshot_list_shows_snapshots() -> Result<(), Box<dyn std::error::Error>
 
 #[cfg(unix)]
 #[test]
+fn test_snapshot_list_shows_messages_by_default() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_list_shows_messages_by_default");
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join("file.txt"), "v1")?;
+
+    let first = agt_cmd_with_git()?
+        .args(["snapshot", "save", "-m", "first snapshot message"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(first.status.success());
+    let first_tag = parse_snapshot_tag(&String::from_utf8(first.stdout)?);
+
+    let output = agt_cmd_with_git()?
+        .args(["snapshot", "list"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+
+    assert!(
+        stdout.contains(&first_tag),
+        "expected first tag in list output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("first snapshot message"),
+        "expected message in list output, got: {stdout}"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn test_snapshot_list_quiet_mode() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_list_quiet_mode");
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join("file.txt"), "v1")?;
+
+    let first = agt_cmd_with_git()?
+        .args(["snapshot", "save", "-m", "quiet mode test"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(first.status.success());
+    let first_tag = parse_snapshot_tag(&String::from_utf8(first.stdout)?);
+
+    let output = agt_cmd_with_git()?
+        .args(["snapshot", "list", "-q"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+
+    assert!(
+        stdout.contains(&first_tag),
+        "expected first tag in list output, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("quiet mode test"),
+        "expected message NOT in quiet list output, got: {stdout}"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
 fn test_snapshot_check_reports_changes_between_snapshots() -> Result<(), Box<dyn std::error::Error>>
 {
     log_test_start("test_snapshot_check_reports_changes_between_snapshots");

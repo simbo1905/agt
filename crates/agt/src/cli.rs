@@ -109,6 +109,9 @@ pub enum SnapshotCommands {
 
     /// List saved standalone snapshots
     List {
+        /// Reduce output; show only tags without messages
+        #[arg(short = 'q', action = ArgAction::Count)]
+        quiet: u8,
         /// Override snapshot store location
         #[arg(long)]
         store: Option<PathBuf>,

@@ -279,7 +279,20 @@ COMMANDS
                   --store <path>         Snapshot store directory
                   -m, --message <text>   Annotated tag message
 
-       agt snapshot diff <snapshot-a> <snapshot-b> [--store <path>]
+        agt snapshot list [-q] [--store <path>]
+               List saved standalone snapshots.
+
+               By default, shows each snapshot tag followed by its message (if any).
+               Use -q (can be repeated) for quieter output:
+
+               • -q
+                      Show only tags, one per line, without messages.
+
+               Options:
+                   -q, -qq              Reduce output (quiet mode)
+                   --store <path>       Snapshot store directory
+
+        agt snapshot diff <snapshot-a> <snapshot-b> [--store <path>]
               Compare two saved standalone snapshots and report deleted, modified,
               and added paths.
 
