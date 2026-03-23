@@ -14,6 +14,10 @@ fn agt_bin() -> PathBuf {
     assert_cmd::cargo::cargo_bin!("agt").to_path_buf()
 }
 
+fn expected_agt_version_line() -> String {
+    format!("agt {}", env!("AGT_BUILD_VERSION"))
+}
+
 #[allow(dead_code)]
 fn log_test_start(test_name: &str) {
     if std::env::var("AGT_LOG").is_ok() {
@@ -233,7 +237,7 @@ fn test_agt_mode_version_shows_own_version() -> Result<(), Box<dyn std::error::E
         .output()?;
 
     let stdout = String::from_utf8(output.stdout)?;
-    assert_eq!(stdout.trim(), format!("agt {}", env!("CARGO_PKG_VERSION")));
+    assert_eq!(stdout.trim(), expected_agt_version_line());
 
     Ok(())
 }
@@ -257,7 +261,7 @@ fn test_git_mode_version_delegates_to_host_git() -> Result<(), Box<dyn std::erro
 
     let stdout = String::from_utf8(output.stdout)?;
     assert!(stdout.contains("mock git version 9.9.9"));
-    assert!(!stdout.contains(&format!("agt {}", env!("CARGO_PKG_VERSION"))));
+    assert!(!stdout.contains(&expected_agt_version_line()));
 
     Ok(())
 }
@@ -283,7 +287,7 @@ fn test_git_mode_version_delegates_even_if_parent_path_contains_agt(
 
     let stdout = String::from_utf8(output.stdout)?;
     assert!(stdout.contains("mock git version 9.9.9"));
-    assert!(!stdout.contains(&format!("agt {}", env!("CARGO_PKG_VERSION"))));
+    assert!(!stdout.contains(&expected_agt_version_line()));
 
     Ok(())
 }
@@ -307,7 +311,7 @@ fn test_agt_show_own_version_overrides_git_mode() -> Result<(), Box<dyn std::err
         .output()?;
 
     let stdout = String::from_utf8(output.stdout)?;
-    assert_eq!(stdout.trim(), format!("agt {}", env!("CARGO_PKG_VERSION")));
+    assert_eq!(stdout.trim(), expected_agt_version_line());
     assert!(!stdout.contains("mock git version 9.9.9"));
 
     Ok(())
@@ -325,7 +329,7 @@ fn test_agt_show_own_version_keeps_agt_mode_version() -> Result<(), Box<dyn std:
         .output()?;
 
     let stdout = String::from_utf8(output.stdout)?;
-    assert_eq!(stdout.trim(), format!("agt {}", env!("CARGO_PKG_VERSION")));
+    assert_eq!(stdout.trim(), expected_agt_version_line());
 
     Ok(())
 }

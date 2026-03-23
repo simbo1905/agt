@@ -282,6 +282,22 @@ jobs:
           pattern: release-*
           merge-multiple: true
           path: release-assets
+      - name: Ensure nightly tag points at current main commit
+        if: needs.release-meta.outputs.release_kind == 'nightly'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api \
+            --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly" \
+            -f sha="${GITHUB_SHA}" \
+            -F force=true \
+          || gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref='refs/tags/nightly' \
+            -f sha="${GITHUB_SHA}"
       - name: Create or refresh draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -292,15 +308,11 @@ jobs:
         shell: bash
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            if [[ "$RELEASE_KIND" == "nightly" ]]; then
-              gh release delete "$RELEASE_TAG" --yes --cleanup-tag
-            else
-              gh release delete "$RELEASE_TAG" --yes
-            fi
+            gh release delete "$RELEASE_TAG" --yes
           fi
 
           gh release create "$RELEASE_TAG" \
-            --target "$GITHUB_SHA" \
+            --verify-tag \
             --title "$RELEASE_TITLE" \
             --notes "$RELEASE_NOTES" \
             --draft

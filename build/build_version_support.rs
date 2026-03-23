@@ -1,3 +1,17 @@
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BuildChannel {
+    Local,
+    Nightly,
+}
+
+pub fn parse_build_channel(value: Option<&str>) -> Result<BuildChannel, String> {
+    match value {
+        Some("nightly") => Ok(BuildChannel::Nightly),
+        Some("") | None => Ok(BuildChannel::Local),
+        Some(other) => Err(format!("unsupported AGT_BUILD_CHANNEL: {other}")),
+    }
+}
+
 pub fn parse_release_ref(ref_name: &str) -> Option<&str> {
     let version = ref_name.strip_prefix("release/")?;
     if is_valid_release_version(version) {
@@ -58,26 +72,41 @@ fn is_valid_suffix(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_local_version, format_nightly_version, is_valid_release_version, parse_release_ref,
+        format_local_version, format_nightly_version, is_valid_release_version,
+        parse_build_channel, parse_release_ref, BuildChannel,
     };
 
     #[test]
+    fn parses_build_channels() {
+        assert_eq!(parse_build_channel(None), Ok(BuildChannel::Local));
+        assert_eq!(parse_build_channel(Some("")), Ok(BuildChannel::Local));
+        assert_eq!(
+            parse_build_channel(Some("nightly")),
+            Ok(BuildChannel::Nightly)
+        );
+        assert_eq!(
+            parse_build_channel(Some("bogus")),
+            Err(String::from("unsupported AGT_BUILD_CHANNEL: bogus"))
+        );
+    }
+
+    #[test]
     fn parses_release_refs() {
-        assert_eq!(parse_release_ref("release/0.1.0"), Some("0.1.0"));
-        assert_eq!(parse_release_ref("release/0.1.0-rc1"), Some("0.1.0-rc1"));
-        assert_eq!(parse_release_ref("0.1.0"), None);
-        assert_eq!(parse_release_ref("release/v0.1.0"), None);
+        assert_eq!(parse_release_ref("release/0.2.0"), Some("0.2.0"));
+        assert_eq!(parse_release_ref("release/0.2.0-rc1"), Some("0.2.0-rc1"));
+        assert_eq!(parse_release_ref("0.2.0"), None);
+        assert_eq!(parse_release_ref("release/v0.2.0"), None);
     }
 
     #[test]
     fn validates_release_versions() {
-        assert!(is_valid_release_version("0.1.0"));
+        assert!(is_valid_release_version("0.2.0"));
         assert!(is_valid_release_version("12.34.56-rc1"));
         assert!(is_valid_release_version("12.34.56-rc.1"));
-        assert!(!is_valid_release_version("v0.1.0"));
+        assert!(!is_valid_release_version("v0.2.0"));
         assert!(!is_valid_release_version("0.1"));
-        assert!(!is_valid_release_version("0.1.0-"));
-        assert!(!is_valid_release_version("0.1.0+build"));
+        assert!(!is_valid_release_version("0.2.0-"));
+        assert!(!is_valid_release_version("0.2.0+build"));
     }
 
     #[test]
@@ -87,12 +116,12 @@ mod tests {
             "2026.03.22-abcdef123456"
         );
         assert_eq!(
-            format_local_version("0.1.0", "abcdef123456", false),
-            "0.1.0-abcdef123456"
+            format_local_version("0.2.0", "abcdef123456", false),
+            "0.2.0-abcdef123456"
         );
         assert_eq!(
-            format_local_version("0.1.0", "abcdef123456", true),
-            "0.1.0-abcdef123456+dirty"
+            format_local_version("0.2.0", "abcdef123456", true),
+            "0.2.0-abcdef123456+dirty"
         );
     }
 }
