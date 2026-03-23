@@ -22,6 +22,28 @@ esac
 
 latest_base=${latest_version%%-*}
 
+parse_base_version() {
+	case "$1" in
+	[0-9]*.[0-9]*.[0-9]*-*)
+		echo "${1%%-*}"
+		;;
+	*)
+		echo "$1"
+		;;
+	esac
+}
+
+is_newer_or_equal() {
+	current_base=$1
+	latest_base=$2
+
+	if [ "$(printf '%s\n%s\n' "$latest_base" "$current_base" | sort -V | head -n1)" != "$latest_base" ]; then
+		echo "no"
+	else
+		echo "yes"
+	fi
+}
+
 read_version() {
 	awk -F '"' '/^version = "/ { print $2; exit }' "$1"
 }
@@ -34,8 +56,10 @@ check_version_file() {
 		exit 1
 	fi
 
-	if [ "$current_version" != "$latest_base" ]; then
-		printf '%s\n' "ERROR: $file version $current_version does not match latest reachable release base $latest_base ($latest_tag)" >&2
+	current_base=$(parse_base_version "$current_version")
+
+	if [ "$(is_newer_or_equal "$current_base" "$latest_base")" != "yes" ]; then
+		printf '%s\n' "ERROR: $file version $current_version is older than latest reachable release base $latest_base ($latest_tag)" >&2
 		exit 1
 	fi
 }
