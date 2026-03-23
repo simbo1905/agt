@@ -20,15 +20,18 @@ fn main() {
         .map(|status| !status.is_empty())
         .unwrap_or(false);
 
-    let version = match env::var("AGT_BUILD_CHANNEL").ok().as_deref() {
-        Some("nightly") => {
+    let version = match build_version_support::parse_build_channel(
+        env::var("AGT_BUILD_CHANNEL").ok().as_deref(),
+    )
+    .unwrap_or_else(|err| panic!("{err}"))
+    {
+        build_version_support::BuildChannel::Nightly => {
             let build_date = env::var("AGT_BUILD_DATE")
                 .expect("AGT_BUILD_DATE must be set when AGT_BUILD_CHANNEL=nightly");
             let sha = short_sha.clone().unwrap_or_else(|| String::from("unknown"));
             build_version_support::format_nightly_version(&build_date, &sha)
         }
-        Some(other) => panic!("unsupported AGT_BUILD_CHANNEL: {other}"),
-        None => {
+        build_version_support::BuildChannel::Local => {
             if !dirty {
                 if let Some(version) = exact_release_version() {
                     version
