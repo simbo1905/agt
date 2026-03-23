@@ -68,7 +68,7 @@ jobs:
             fi
             publish=true
             release_kind=semver
-            release_tag="${version}"
+            release_tag="release/${version}"
             release_title="${version}"
             binary_suffix="${version}"
             asset_suffix="${version}"

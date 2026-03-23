@@ -629,4 +629,4 @@ BUGS
 AUTHOR
        Written for AI agent session management and immutable filesystem workflows.
 
-AGT 0.2.0                         January 2026                          AGT(1)
+AGT 2.0.1                         January 2026                          AGT(1)
