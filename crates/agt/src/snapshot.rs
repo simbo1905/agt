@@ -1,6 +1,7 @@
 use crate::config::AgtConfig;
 use anyhow::{bail, Context, Result};
 use gix::bstr::BStr;
+use gix::bstr::ByteSlice;
 use gix::object::tree::EntryKind;
 use gix::Repository;
 use gix_object::{compute_hash, Kind, Tree};
@@ -17,6 +18,7 @@ const MANIFEST_PATH: &str = "meta/manifest.bin";
 const PAYLOAD_PREFIX: &str = "payload";
 const MANIFEST_MAGIC: &[u8; 8] = b"AGTSNP01";
 const MANIFEST_VERSION: u32 = 1;
+const SNAPSHOT_LIST_WIDTH: usize = 80;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SnapshotManifest {
@@ -200,22 +202,47 @@ pub fn list(_repo: &Repository, store: Option<&Path>) -> Result<()> {
     let store_path = resolve_store_path(store, &current_dir)?;
     let snapshot_repo = open_snapshot_repo(&store_path)?;
 
-    let mut tags: Vec<String> = Vec::new();
+    let mut tags: Vec<(String, String)> = Vec::new();
     for reference in snapshot_repo.references()?.tags()? {
-        let reference = reference.map_err(|err| anyhow::anyhow!(err.to_string()))?;
+        let mut reference = reference.map_err(|err| anyhow::anyhow!(err.to_string()))?;
         let full_name = reference.name().as_bstr().to_string();
         let Some(short_name) = full_name.strip_prefix("refs/tags/") else {
             continue;
         };
-        tags.push(short_name.to_string());
+        let tag_object = reference.peel_to_tag()?;
+        let tag = tag_object.decode()?;
+        tags.push((
+            short_name.to_string(),
+            normalize_snapshot_message(tag.message.as_bstr().to_string()),
+        ));
     }
 
-    tags.sort();
-    for tag in &tags {
-        println!("{tag}");
+    tags.sort_by(|left, right| left.0.cmp(&right.0));
+    for (tag, message) in &tags {
+        println!("{}", format_snapshot_list_line(tag, message));
     }
     println!("\n{} snapshot(s)", tags.len());
     Ok(())
+}
+
+fn normalize_snapshot_message(message: String) -> String {
+    message.replace('\n', " ").trim().to_string()
+}
+
+fn format_snapshot_list_line(tag: &str, message: &str) -> String {
+    let full_line = format!("{tag} {message}");
+    if full_line.chars().count() <= SNAPSHOT_LIST_WIDTH {
+        return full_line;
+    }
+
+    let prefix = format!("{tag} ");
+    let available = SNAPSHOT_LIST_WIDTH.saturating_sub(prefix.chars().count());
+    if available <= 2 {
+        return prefix;
+    }
+
+    let truncated_message: String = message.chars().take(available - 2).collect();
+    format!("{prefix}{truncated_message}..")
 }
 
 pub fn restore(
