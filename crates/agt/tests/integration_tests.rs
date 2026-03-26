@@ -641,17 +641,173 @@ fn test_snapshot_list_shows_snapshots() -> Result<(), Box<dyn std::error::Error>
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout)?;
 
+    let second_message = "second snapshot";
+    let first_line = stdout
+        .lines()
+        .find(|line| line.starts_with(&first_tag))
+        .expect("expected first snapshot line in list output");
     assert!(
-        stdout.contains(&first_tag),
-        "expected first tag in list output, got: {stdout}"
+        first_line.starts_with(&format!("{first_tag} snapshot save for ")),
+        "expected default message prefix in list output, got: {stdout}"
     );
     assert!(
-        stdout.contains(&second_tag),
-        "expected second tag in list output, got: {stdout}"
+        stdout.contains(&format!("{second_tag} {second_message}")),
+        "expected second tag and message in list output, got: {stdout}"
     );
     assert!(
         stdout.contains("2 snapshot(s)"),
         "expected count in list output, got: {stdout}"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn test_snapshot_list_truncates_to_terminal_width() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_list_truncates_to_terminal_width");
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join("file.txt"), "v1")?;
+
+    let message = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-long-message";
+    let save = agt_cmd_with_git()?
+        .args(["snapshot", "save", "-m", message])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(save.status.success());
+    let tag = parse_snapshot_tag(&String::from_utf8(save.stdout)?);
+
+    let output = agt_cmd_with_git()?
+        .args(["snapshot", "list"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    let line = stdout
+        .lines()
+        .find(|line| line.starts_with(&tag))
+        .expect("expected snapshot line in list output");
+
+    assert_eq!(line.len(), 80, "expected 80-char line, got: {line}");
+    assert!(line.starts_with(&format!("{tag} ")));
+    assert!(
+        line.ends_with(".."),
+        "expected truncated suffix, got: {line}"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn test_snapshot_list_quiet_shows_only_tags() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_list_quiet_shows_only_tags");
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join("file.txt"), "v1")?;
+
+    let first = agt_cmd_with_git()?
+        .args(["snapshot", "save", "-m", "first snapshot"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(first.status.success());
+    let first_tag = parse_snapshot_tag(&String::from_utf8(first.stdout)?);
+
+    fs::write(repo.worktree().join("file.txt"), "v2")?;
+    let second = agt_cmd_with_git()?
+        .args(["snapshot", "save", "-m", "second snapshot"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(second.status.success());
+    let second_tag = parse_snapshot_tag(&String::from_utf8(second.stdout)?);
+
+    let output = agt_cmd_with_git()?
+        .args(["snapshot", "list", "-q"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+
+    assert!(
+        stdout.contains(&format!("{first_tag}\n")),
+        "expected first tag in quiet output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("{second_tag}\n")),
+        "expected second tag in quiet output, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("first snapshot"),
+        "quiet output should omit messages, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("second snapshot"),
+        "quiet output should omit messages, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("2 snapshot(s)"),
+        "expected count in quiet output, got: {stdout}"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn test_snapshot_list_handles_lightweight_tags() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_list_handles_lightweight_tags");
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join("file.txt"), "v1")?;
+
+    let save = agt_cmd_with_git()?
+        .args(["snapshot", "save", "-m", "annotated snapshot"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(save.status.success());
+    let annotated_tag = parse_snapshot_tag(&String::from_utf8(save.stdout)?);
+    let snapshot_store = repo.worktree().join(".agt-snapshots");
+    let target = Command::new("git")
+        .args([
+            "-C",
+            &snapshot_store.display().to_string(),
+            "rev-parse",
+            "refs/heads/agt-snapshots",
+        ])
+        .output()?;
+    assert!(target.status.success());
+    let target = String::from_utf8(target.stdout)?.trim().to_string();
+
+    let lightweight = Command::new("git")
+        .args([
+            "-C",
+            &snapshot_store.display().to_string(),
+            "tag",
+            "lightweight-only",
+            &target,
+        ])
+        .status()?;
+    assert!(lightweight.success());
+
+    let output = agt_cmd_with_git()?
+        .args(["snapshot", "list"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+
+    assert!(
+        stdout.contains(&format!("{annotated_tag} annotated snapshot")),
+        "expected annotated tag output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("lightweight-only"),
+        "expected lightweight tag output, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("lightweight-only "),
+        "lightweight tag should not have a forced trailing message column, got: {stdout}"
     );
 
     Ok(())

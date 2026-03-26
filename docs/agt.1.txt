@@ -290,6 +290,29 @@ COMMANDS
               Options:
                   --store <path>         Snapshot store directory
 
+       agt snapshot list [-q] [--store <path>]
+              List saved standalone snapshots.
+
+              This command prints one snapshot per line as:
+
+              • <tag> <message>
+
+              The tag is shown in full. The message is the annotated tag message
+              saved by `agt snapshot save -m`, or the default generated message
+              when `-m` was omitted.
+
+              Output is formatted for an 80-column terminal. If the full line
+              would exceed 80 columns, agt truncates it to fit within 80 columns
+              by shortening the message and ending the line with `..`.
+
+              • -q
+                     Print only snapshot tags and omit messages. The snapshot
+                     count footer is still shown.
+
+              Options:
+                  -q, --quiet           Print only snapshot tags
+                  --store <path>         Snapshot store directory
+
        agt snapshot status [-q] [-q] [--store <path>]
               Compare the current filesystem state against the latest standalone
               snapshot in the store.
@@ -517,6 +540,9 @@ EXAMPLES
         Save a standalone snapshot of the current tree:
                $ agt snapshot save -m "before agent run"
 
+        List standalone snapshots with their messages:
+               $ agt snapshot list
+
         Compare two standalone snapshots:
                $ agt snapshot diff 01739800000000000000 01739800001234567890
 
@@ -629,4 +655,4 @@ BUGS
 AUTHOR
        Written for AI agent session management and immutable filesystem workflows.
 
-AGT 0.2.1                         January 2026                          AGT(1)
+AGT 0.2.2                         January 2026                          AGT(1)

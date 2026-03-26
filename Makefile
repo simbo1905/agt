@@ -44,6 +44,5 @@ docs:
 	mkdir -p .tmp
 	cd bin && uv sync
 	npm list -g @mermaid-js/mermaid-cli >/dev/null 2>&1 || npm install -g @mermaid-js/mermaid-cli
-	cd bin && uv run ./md2pdf ../DESIGN_20260104.md --pdf ../.tmp/DESIGN_20260104.pdf --svg-dir ../.tmp
-	cd bin && uv run ./md2pdf ../DESIGN_20260105.md --pdf ../.tmp/DESIGN_20260105.pdf --svg-dir ../.tmp
+	cd bin && for design in ../DESIGN_*.md; do name=$$(basename "$$design" .md); uv run ./md2pdf "$$design" --pdf "../.tmp/$$name.pdf" --svg-dir ../.tmp; done
 	@echo "PDFs and SVGs generated in .tmp/"

@@ -19,7 +19,7 @@ pub fn run(repo: &Repository, command: SnapshotCommands, config: &AgtConfig) -> 
         SnapshotCommands::Status { store, quiet } => {
             snapshot::status(repo, store.as_deref(), quiet)
         }
-        SnapshotCommands::List { store } => snapshot::list(repo, store.as_deref()),
+        SnapshotCommands::List { store, quiet } => snapshot::list(repo, store.as_deref(), quiet),
         SnapshotCommands::Restore {
             snapshot: snapshot_name,
             target,

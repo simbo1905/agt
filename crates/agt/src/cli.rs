@@ -112,6 +112,9 @@ pub enum SnapshotCommands {
         /// Override snapshot store location
         #[arg(long)]
         store: Option<PathBuf>,
+        /// Print only snapshot tags
+        #[arg(short = 'q', long)]
+        quiet: bool,
     },
 
     /// Restore files from a saved snapshot
