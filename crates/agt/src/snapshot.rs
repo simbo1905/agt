@@ -202,27 +202,34 @@ pub fn list(_repo: &Repository, store: Option<&Path>, quiet: bool) -> Result<()>
     let store_path = resolve_store_path(store, &current_dir)?;
     let snapshot_repo = open_snapshot_repo(&store_path)?;
 
-    let mut tags: Vec<(String, String)> = Vec::new();
+    let mut tags: Vec<(String, Option<String>)> = Vec::new();
     for reference in snapshot_repo.references()?.tags()? {
-        let mut reference = reference.map_err(|err| anyhow::anyhow!(err.to_string()))?;
+        let reference = reference.map_err(|err| anyhow::anyhow!(err.to_string()))?;
         let full_name = reference.name().as_bstr().to_string();
         let Some(short_name) = full_name.strip_prefix("refs/tags/") else {
             continue;
         };
-        let tag_object = reference.peel_to_tag()?;
-        let tag = tag_object.decode()?;
-        tags.push((
-            short_name.to_string(),
-            normalize_snapshot_message(tag.message.as_bstr().to_string()),
-        ));
+        let message = reference.try_id().and_then(|id| {
+            let object = id.object().ok()?;
+            let tag = object.try_to_tag_ref().ok()?;
+            let message = normalize_snapshot_message(tag.message.as_bstr().to_string());
+            if message.is_empty() {
+                None
+            } else {
+                Some(message)
+            }
+        });
+        tags.push((short_name.to_string(), message));
     }
 
     tags.sort_by(|left, right| left.0.cmp(&right.0));
     for (tag, message) in &tags {
         if quiet {
             println!("{tag}");
-        } else {
+        } else if let Some(message) = message {
             println!("{}", format_snapshot_list_line(tag, message));
+        } else {
+            println!("{tag}");
         }
     }
     println!("\n{} snapshot(s)", tags.len());

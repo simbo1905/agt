@@ -755,6 +755,66 @@ fn test_snapshot_list_quiet_shows_only_tags() -> Result<(), Box<dyn std::error::
 
 #[cfg(unix)]
 #[test]
+fn test_snapshot_list_handles_lightweight_tags() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_list_handles_lightweight_tags");
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join("file.txt"), "v1")?;
+
+    let save = agt_cmd_with_git()?
+        .args(["snapshot", "save", "-m", "annotated snapshot"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(save.status.success());
+    let annotated_tag = parse_snapshot_tag(&String::from_utf8(save.stdout)?);
+    let snapshot_store = repo.worktree().join(".agt-snapshots");
+    let target = Command::new("git")
+        .args([
+            "-C",
+            &snapshot_store.display().to_string(),
+            "rev-parse",
+            "refs/heads/agt-snapshots",
+        ])
+        .output()?;
+    assert!(target.status.success());
+    let target = String::from_utf8(target.stdout)?.trim().to_string();
+
+    let lightweight = Command::new("git")
+        .args([
+            "-C",
+            &snapshot_store.display().to_string(),
+            "tag",
+            "lightweight-only",
+            &target,
+        ])
+        .status()?;
+    assert!(lightweight.success());
+
+    let output = agt_cmd_with_git()?
+        .args(["snapshot", "list"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+
+    assert!(
+        stdout.contains(&format!("{annotated_tag} annotated snapshot")),
+        "expected annotated tag output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("lightweight-only"),
+        "expected lightweight tag output, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("lightweight-only "),
+        "lightweight tag should not have a forced trailing message column, got: {stdout}"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
 fn test_snapshot_check_reports_changes_between_snapshots() -> Result<(), Box<dyn std::error::Error>>
 {
     log_test_start("test_snapshot_check_reports_changes_between_snapshots");
