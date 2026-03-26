@@ -196,7 +196,7 @@ pub fn status(_repo: &Repository, store: Option<&Path>, quiet: u8) -> Result<()>
     Ok(())
 }
 
-pub fn list(_repo: &Repository, store: Option<&Path>) -> Result<()> {
+pub fn list(_repo: &Repository, store: Option<&Path>, quiet: bool) -> Result<()> {
     ensure_supported_platform()?;
     let current_dir = std::env::current_dir()?;
     let store_path = resolve_store_path(store, &current_dir)?;
@@ -219,7 +219,11 @@ pub fn list(_repo: &Repository, store: Option<&Path>) -> Result<()> {
 
     tags.sort_by(|left, right| left.0.cmp(&right.0));
     for (tag, message) in &tags {
-        println!("{}", format_snapshot_list_line(tag, message));
+        if quiet {
+            println!("{tag}");
+        } else {
+            println!("{}", format_snapshot_list_line(tag, message));
+        }
     }
     println!("\n{} snapshot(s)", tags.len());
     Ok(())

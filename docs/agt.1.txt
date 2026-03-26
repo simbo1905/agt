@@ -290,7 +290,7 @@ COMMANDS
               Options:
                   --store <path>         Snapshot store directory
 
-       agt snapshot list [--store <path>]
+       agt snapshot list [-q] [--store <path>]
               List saved standalone snapshots.
 
               This command prints one snapshot per line as:
@@ -305,7 +305,12 @@ COMMANDS
               would exceed 80 columns, agt truncates it to fit within 80 columns
               by shortening the message and ending the line with `..`.
 
+              • -q
+                     Print only snapshot tags and omit messages. The snapshot
+                     count footer is still shown.
+
               Options:
+                  -q, --quiet           Print only snapshot tags
                   --store <path>         Snapshot store directory
 
        agt snapshot status [-q] [-q] [--store <path>]

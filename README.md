@@ -60,7 +60,7 @@ Key commands:
 - `agt session remove --id <id>` - Remove a session
 - `agt autocommit --session-id <id>` - Capture session shadow history
 - `agt snapshot save` - Save a standalone filesystem snapshot into an isolated store
-- `agt snapshot list` - List standalone snapshots with their saved messages
+- `agt snapshot list [-q]` - List standalone snapshots, with optional tag-only quiet output
 - `agt snapshot diff <snapshot-a> <snapshot-b>` - Compare two standalone snapshots
 - `agt snapshot status` - Compare the current tree against the latest standalone snapshot
 - `agt snapshot restore` - Restore all or part of a saved standalone snapshot

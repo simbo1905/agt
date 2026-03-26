@@ -701,6 +701,60 @@ fn test_snapshot_list_truncates_to_terminal_width() -> Result<(), Box<dyn std::e
 
 #[cfg(unix)]
 #[test]
+fn test_snapshot_list_quiet_shows_only_tags() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_list_quiet_shows_only_tags");
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(repo.worktree().join("file.txt"), "v1")?;
+
+    let first = agt_cmd_with_git()?
+        .args(["snapshot", "save", "-m", "first snapshot"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(first.status.success());
+    let first_tag = parse_snapshot_tag(&String::from_utf8(first.stdout)?);
+
+    fs::write(repo.worktree().join("file.txt"), "v2")?;
+    let second = agt_cmd_with_git()?
+        .args(["snapshot", "save", "-m", "second snapshot"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(second.status.success());
+    let second_tag = parse_snapshot_tag(&String::from_utf8(second.stdout)?);
+
+    let output = agt_cmd_with_git()?
+        .args(["snapshot", "list", "-q"])
+        .current_dir(repo.worktree())
+        .output()?;
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+
+    assert!(
+        stdout.contains(&format!("{first_tag}\n")),
+        "expected first tag in quiet output, got: {stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("{second_tag}\n")),
+        "expected second tag in quiet output, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("first snapshot"),
+        "quiet output should omit messages, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("second snapshot"),
+        "quiet output should omit messages, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("2 snapshot(s)"),
+        "expected count in quiet output, got: {stdout}"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
 fn test_snapshot_check_reports_changes_between_snapshots() -> Result<(), Box<dyn std::error::Error>>
 {
     log_test_start("test_snapshot_check_reports_changes_between_snapshots");
