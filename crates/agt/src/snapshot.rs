@@ -8,7 +8,7 @@ use gix_object::{compute_hash, Kind, Tree};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs::{self, Metadata};
-use std::io::{self, Cursor, Read, Write};
+use std::io::{self, BufRead, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -19,6 +19,7 @@ const PAYLOAD_PREFIX: &str = "payload";
 const MANIFEST_MAGIC: &[u8; 8] = b"AGTSNP01";
 const MANIFEST_VERSION: u32 = 1;
 const SNAPSHOT_LIST_WIDTH: usize = 80;
+const SNAPSHOT_IGNORE_FILE: &str = ".agt-snapshot-ignore";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SnapshotManifest {
@@ -68,6 +69,28 @@ enum PlatformFileId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct PlatformFileId;
 
+#[derive(Clone, Debug)]
+struct SnapshotIgnoreRules {
+    repo_root: PathBuf,
+    source_path: PathBuf,
+    search: gix::ignore::Search,
+    case: gix::glob::pattern::Case,
+}
+
+#[derive(Clone, Debug)]
+struct SnapshotIgnoreMatch {
+    ignored: bool,
+    source: String,
+    line_number: usize,
+    pattern: String,
+}
+
+#[derive(Default)]
+struct SnapshotCapture {
+    records: Vec<SnapshotRecord>,
+    ignored_file_count: usize,
+}
+
 pub fn save(
     repo: &Repository,
     config: &AgtConfig,
@@ -83,14 +106,23 @@ pub fn save(
     let store_path = resolve_store_path(store, &current_dir)?;
     warn_if_store_not_ignored(repo, config, &store_path)?;
     let snapshot_repo = open_or_init_snapshot_repo(&store_path)?;
+    let ignore_rules = load_snapshot_ignore_rules(&target_root)?;
 
     let created_at_ns = now_ns();
-    let mut records = capture_records(&snapshot_repo, &target_root, &store_path, true)?;
-    records.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut capture = capture_records(
+        &snapshot_repo,
+        &target_root,
+        &store_path,
+        ignore_rules.as_ref(),
+        true,
+    )?;
+    capture
+        .records
+        .sort_by(|left, right| left.path.cmp(&right.path));
     let manifest = SnapshotManifest {
         target_root: normalize_path(&target_root),
         created_at_ns,
-        records,
+        records: capture.records,
     };
 
     let tag_name = next_tag_name(&snapshot_repo, created_at_ns)?;
@@ -111,6 +143,7 @@ pub fn save(
     println!("Saved snapshot {tag_name}");
     println!("Store: {}", store_path.display());
     println!("Files: {}", manifest.records.len());
+    println!("Ignored: {}", capture.ignored_file_count);
     Ok(())
 }
 
@@ -159,18 +192,28 @@ pub fn check(_repo: &Repository, before: &str, after: &str, store: Option<&Path>
     Ok(())
 }
 
-pub fn status(_repo: &Repository, store: Option<&Path>, quiet: u8) -> Result<()> {
+pub fn status(_repo: &Repository, store: Option<&Path>, ignored: bool, quiet: u8) -> Result<()> {
     ensure_supported_platform()?;
     let current_dir = std::env::current_dir()?;
     let store_path = resolve_store_path(store, &current_dir)?;
+    if ignored {
+        return status_ignored(&current_dir, &store_path, quiet);
+    }
+
     let snapshot_repo = open_snapshot_repo(&store_path)?;
     let latest_tag = latest_snapshot_tag(&snapshot_repo)?.context("No snapshots found in store")?;
     let manifest = load_manifest_for_tag(&snapshot_repo, &latest_tag)?;
     let target_root = PathBuf::from(&manifest.target_root);
+    let ignore_rules = load_snapshot_ignore_rules(&target_root)?;
 
     if quiet > 0 {
-        let changed =
-            has_changes_against_manifest(&snapshot_repo, &manifest, &target_root, &store_path)?;
+        let changed = has_changes_against_manifest(
+            &snapshot_repo,
+            &manifest,
+            &target_root,
+            &store_path,
+            ignore_rules.as_ref(),
+        )?;
         if quiet > 1 {
             if changed {
                 std::process::exit(1);
@@ -185,7 +228,14 @@ pub fn status(_repo: &Repository, store: Option<&Path>, quiet: u8) -> Result<()>
     let current_manifest = SnapshotManifest {
         target_root: manifest.target_root.clone(),
         created_at_ns: now_ns(),
-        records: capture_records(&snapshot_repo, &target_root, &store_path, false)?,
+        records: capture_records(
+            &snapshot_repo,
+            &target_root,
+            &store_path,
+            ignore_rules.as_ref(),
+            false,
+        )?
+        .records,
     };
     let diff = diff_manifests(&manifest, &current_manifest);
     println!("Latest snapshot {latest_tag}");
@@ -194,6 +244,92 @@ pub fn status(_repo: &Repository, store: Option<&Path>, quiet: u8) -> Result<()>
         println!("Clean");
     }
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckIgnoreFormat {
+    Plain,
+    Verbose,
+    VerboseWithNonMatching,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckIgnoreTerminator {
+    Newline,
+    Nul,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckIgnoreSource {
+    Paths,
+    Stdin,
+}
+
+pub struct CheckIgnoreOptions {
+    pub format: CheckIgnoreFormat,
+    pub terminator: CheckIgnoreTerminator,
+    pub source: CheckIgnoreSource,
+}
+
+pub fn check_ignore(
+    _repo: &Repository,
+    options: CheckIgnoreOptions,
+    paths: &[String],
+) -> Result<()> {
+    ensure_supported_platform()?;
+
+    let current_dir = std::env::current_dir()?;
+    let ignore_rules = load_snapshot_ignore_rules(&current_dir)?;
+    let is_nul = options.terminator == CheckIgnoreTerminator::Nul;
+    let inputs =
+        collect_check_ignore_inputs(options.source == CheckIgnoreSource::Stdin, is_nul, paths)?;
+
+    let mut saw_ignored = false;
+    let mut saw_match = false;
+    let mut stdout = io::stdout().lock();
+
+    for input in inputs {
+        let match_ = ignore_rules
+            .as_ref()
+            .and_then(|rules| rules.match_for_input(&input, &current_dir));
+        if let Some(info) = &match_ {
+            if info.ignored {
+                saw_ignored = true;
+            }
+            saw_match = true;
+        }
+
+        match options.format {
+            CheckIgnoreFormat::Verbose | CheckIgnoreFormat::VerboseWithNonMatching => {
+                if let Some(info) = match_ {
+                    write_check_ignore_verbose(&mut stdout, &input, &info, is_nul)?;
+                } else if options.format == CheckIgnoreFormat::VerboseWithNonMatching {
+                    write_check_ignore_non_matching(&mut stdout, &input, is_nul)?;
+                }
+            }
+            CheckIgnoreFormat::Plain => {
+                if let Some(info) = match_ {
+                    if info.ignored {
+                        write_check_ignore_plain(&mut stdout, &input, is_nul)?;
+                    }
+                }
+            }
+        }
+    }
+
+    match options.format {
+        CheckIgnoreFormat::Verbose | CheckIgnoreFormat::VerboseWithNonMatching => {
+            if saw_match {
+                return Ok(());
+            }
+        }
+        CheckIgnoreFormat::Plain => {
+            if saw_ignored {
+                return Ok(());
+            }
+        }
+    }
+    std::process::exit(1)
 }
 
 pub fn list(_repo: &Repository, store: Option<&Path>, quiet: bool) -> Result<()> {
@@ -233,6 +369,106 @@ pub fn list(_repo: &Repository, store: Option<&Path>, quiet: bool) -> Result<()>
         }
     }
     println!("\n{} snapshot(s)", tags.len());
+    Ok(())
+}
+
+fn status_ignored(target_root: &Path, store_path: &Path, quiet: u8) -> Result<()> {
+    let ignored_paths = collect_ignored_paths(
+        target_root,
+        store_path,
+        load_snapshot_ignore_rules(target_root)?.as_ref(),
+    )?;
+    if quiet > 1 {
+        if ignored_paths.is_empty() {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
+    for path in ignored_paths {
+        println!("{path}");
+    }
+    Ok(())
+}
+
+fn collect_check_ignore_inputs(stdin: bool, nul: bool, paths: &[String]) -> Result<Vec<String>> {
+    let mut inputs = paths.to_vec();
+    if !stdin {
+        return Ok(inputs);
+    }
+
+    if nul {
+        let mut buf = Vec::new();
+        io::stdin().read_to_end(&mut buf)?;
+        inputs.extend(
+            buf.split(|byte| *byte == 0)
+                .filter(|entry| !entry.is_empty())
+                .map(|entry| String::from_utf8_lossy(entry).into_owned()),
+        );
+        return Ok(inputs);
+    }
+
+    let mut line = String::new();
+    let mut handle = io::stdin().lock();
+    loop {
+        line.clear();
+        let bytes = handle.read_line(&mut line)?;
+        if bytes == 0 {
+            break;
+        }
+        if let Some(stripped) = line.strip_suffix('\n') {
+            let stripped = stripped.strip_suffix('\r').unwrap_or(stripped);
+            inputs.push(stripped.to_string());
+        } else {
+            inputs.push(line.clone());
+        }
+    }
+    Ok(inputs)
+}
+
+fn write_check_ignore_plain(out: &mut dyn Write, input: &str, nul: bool) -> Result<()> {
+    if nul {
+        out.write_all(input.as_bytes())?;
+        out.write_all(&[0])?;
+    } else {
+        writeln!(out, "{input}")?;
+    }
+    Ok(())
+}
+
+fn write_check_ignore_verbose(
+    out: &mut dyn Write,
+    input: &str,
+    info: &SnapshotIgnoreMatch,
+    nul: bool,
+) -> Result<()> {
+    if nul {
+        out.write_all(info.source.as_bytes())?;
+        out.write_all(&[0])?;
+        out.write_all(info.line_number.to_string().as_bytes())?;
+        out.write_all(&[0])?;
+        out.write_all(info.pattern.as_bytes())?;
+        out.write_all(&[0])?;
+        out.write_all(input.as_bytes())?;
+        out.write_all(&[0])?;
+    } else {
+        writeln!(
+            out,
+            "{}:{}:{}	{}",
+            info.source, info.line_number, info.pattern, input
+        )?;
+    }
+    Ok(())
+}
+
+fn write_check_ignore_non_matching(out: &mut dyn Write, input: &str, nul: bool) -> Result<()> {
+    if nul {
+        out.write_all(&[0, 0, 0])?;
+        out.write_all(input.as_bytes())?;
+        out.write_all(&[0])?;
+    } else {
+        writeln!(out, "::	{input}")?;
+    }
     Ok(())
 }
 
@@ -515,10 +751,11 @@ fn capture_records(
     repo: &Repository,
     target_root: &Path,
     store_path: &Path,
+    ignore_rules: Option<&SnapshotIgnoreRules>,
     write_blobs: bool,
-) -> Result<Vec<SnapshotRecord>> {
+) -> Result<SnapshotCapture> {
     let store_for_walk = store_path.to_path_buf();
-    let mut records = Vec::new();
+    let mut capture = SnapshotCapture::default();
 
     for entry in jwalk::WalkDir::new(target_root)
         .skip_hidden(false)
@@ -534,10 +771,6 @@ fn capture_records(
         .into_iter()
         .filter_map(std::result::Result::ok)
     {
-        if entry.file_type().is_dir() {
-            continue;
-        }
-
         let path = entry.path();
         if path.starts_with(store_path) {
             continue;
@@ -547,17 +780,28 @@ fn capture_records(
         let rel_path = path
             .strip_prefix(target_root)
             .with_context(|| format!("{} is outside {}", path.display(), target_root.display()))?;
-        records.push(build_record(
-            repo,
-            target_root,
-            rel_path,
-            &path,
-            &metadata,
-            write_blobs,
-        )?);
+        if ignore_rules
+            .and_then(|rules| rules.match_relative_path(rel_path, metadata.file_type().is_dir()))
+            .is_some_and(|match_| match_.ignored)
+        {
+            if !entry.file_type().is_dir() {
+                capture.ignored_file_count += 1;
+            }
+            continue;
+        }
+        if !entry.file_type().is_dir() {
+            capture.records.push(build_record(
+                repo,
+                target_root,
+                rel_path,
+                &path,
+                &metadata,
+                write_blobs,
+            )?);
+        }
     }
 
-    Ok(records)
+    Ok(capture)
 }
 
 fn build_record(
@@ -614,6 +858,165 @@ fn build_record(
         gid: metadata_gid(metadata),
         flags: metadata_flags(metadata),
     })
+}
+
+fn load_snapshot_ignore_rules(target_root: &Path) -> Result<Option<SnapshotIgnoreRules>> {
+    let Some(repo_root) = discover_repo_root(target_root)? else {
+        return Ok(None);
+    };
+    if !target_root.starts_with(&repo_root) {
+        return Ok(None);
+    }
+
+    let source_path = repo_root.join(SNAPSHOT_IGNORE_FILE);
+    if !source_path.is_file() {
+        return Ok(None);
+    }
+
+    let bytes = fs::read(&source_path)
+        .with_context(|| format!("Failed to read {}", source_path.display()))?;
+    let mut search = gix::ignore::Search::default();
+    search.add_patterns_buffer(&bytes, source_path.clone(), Some(repo_root.as_path()));
+
+    let case = if gix::fs::Capabilities::probe(repo_root.as_path()).ignore_case {
+        gix::glob::pattern::Case::Fold
+    } else {
+        gix::glob::pattern::Case::Sensitive
+    };
+
+    Ok(Some(SnapshotIgnoreRules {
+        repo_root,
+        source_path,
+        search,
+        case,
+    }))
+}
+
+fn collect_ignored_paths(
+    target_root: &Path,
+    store_path: &Path,
+    ignore_rules: Option<&SnapshotIgnoreRules>,
+) -> Result<Vec<String>> {
+    let Some(ignore_rules) = ignore_rules else {
+        return Ok(Vec::new());
+    };
+
+    let mut ignored = BTreeSet::new();
+    let store_for_walk = store_path.to_path_buf();
+    for entry in jwalk::WalkDir::new(target_root)
+        .skip_hidden(false)
+        .process_read_dir(move |_depth, path, _state, children| {
+            children.retain(|entry| {
+                entry.as_ref().map_or(true, |dir_entry| {
+                    dir_entry.file_name != OsStr::new(".git")
+                        && dir_entry.file_name != OsStr::new(DEFAULT_STORE_DIR)
+                        && path.join(&dir_entry.file_name) != store_for_walk
+                })
+            });
+        })
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        let path = entry.path();
+        if path.starts_with(store_path) {
+            continue;
+        }
+        let rel_path = path
+            .strip_prefix(target_root)
+            .with_context(|| format!("{} is outside {}", path.display(), target_root.display()))?;
+        let is_dir = entry.file_type().is_dir();
+        if ignore_rules
+            .match_relative_path(rel_path, is_dir)
+            .is_some_and(|match_| match_.ignored)
+        {
+            ignored.insert(normalize_rel_path(rel_path));
+        }
+    }
+
+    Ok(ignored.into_iter().collect())
+}
+
+impl SnapshotIgnoreRules {
+    fn match_relative_path(
+        &self,
+        relative_path: &Path,
+        is_dir: bool,
+    ) -> Option<SnapshotIgnoreMatch> {
+        let direct = self.match_bstr(
+            normalize_rel_path(relative_path).as_bytes().as_bstr(),
+            Some(is_dir),
+        );
+        if let Some(ancestor) = self.match_ignored_ancestor(relative_path) {
+            return Some(ancestor);
+        }
+        direct
+    }
+
+    fn match_for_input(&self, input: &str, current_dir: &Path) -> Option<SnapshotIgnoreMatch> {
+        let path = Path::new(input);
+        let candidate = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            current_dir.join(path)
+        };
+        let canonical = candidate.canonicalize().unwrap_or(candidate);
+        if !canonical.starts_with(&self.repo_root) {
+            return None;
+        }
+        let rel = canonical.strip_prefix(&self.repo_root).ok()?;
+        let is_dir = fs::symlink_metadata(&canonical)
+            .map(|meta| meta.file_type().is_dir())
+            .ok()
+            .unwrap_or(false);
+        self.match_relative_path(rel, is_dir)
+    }
+
+    fn match_ignored_ancestor(&self, relative_path: &Path) -> Option<SnapshotIgnoreMatch> {
+        let mut best: Option<SnapshotIgnoreMatch> = None;
+        for ancestor in relative_path.ancestors().skip(1) {
+            if ancestor.as_os_str().is_empty() {
+                continue;
+            }
+            let candidate = self.match_bstr(
+                normalize_rel_path(ancestor).as_bytes().as_bstr(),
+                Some(true),
+            );
+            if let Some(candidate) = candidate.filter(|match_| match_.ignored) {
+                if best
+                    .as_ref()
+                    .is_none_or(|current| candidate.line_number >= current.line_number)
+                {
+                    best = Some(candidate);
+                }
+            }
+        }
+        best
+    }
+
+    fn match_bstr(&self, relative: &BStr, is_dir: Option<bool>) -> Option<SnapshotIgnoreMatch> {
+        let match_ = self
+            .search
+            .pattern_matching_relative_path(relative, is_dir, self.case)?;
+        Some(SnapshotIgnoreMatch {
+            ignored: !match_.pattern.is_negative(),
+            source: match_
+                .source
+                .map(|path| {
+                    path.strip_prefix(&self.repo_root)
+                        .map(normalize_rel_path)
+                        .unwrap_or_else(|_| normalize_path(path))
+                })
+                .unwrap_or_else(|| {
+                    normalize_rel_path(
+                        self.source_path
+                            .strip_prefix(&self.repo_root)
+                            .unwrap_or(&self.source_path),
+                    )
+                }),
+            line_number: match_.sequence_number,
+            pattern: match_.pattern.to_string(),
+        })
+    }
 }
 
 fn write_snapshot_commit(
@@ -752,6 +1155,7 @@ fn has_changes_against_manifest(
     manifest: &SnapshotManifest,
     target_root: &Path,
     store_path: &Path,
+    ignore_rules: Option<&SnapshotIgnoreRules>,
 ) -> Result<bool> {
     let mut expected: HashMap<String, &SnapshotRecord> = manifest
         .records
@@ -782,11 +1186,19 @@ fn has_changes_against_manifest(
             continue;
         }
 
-        let rel_path = normalize_rel_path(path.strip_prefix(target_root)?);
+        let metadata = fs::symlink_metadata(&path)?;
+        let rel_path = path.strip_prefix(target_root)?;
+        if ignore_rules
+            .and_then(|rules| rules.match_relative_path(rel_path, metadata.file_type().is_dir()))
+            .is_some_and(|match_| match_.ignored)
+        {
+            continue;
+        }
+
+        let rel_path = normalize_rel_path(rel_path);
         let Some(expected_record) = expected.remove(&rel_path) else {
             return Ok(true);
         };
-        let metadata = fs::symlink_metadata(&path)?;
         let current = build_record(
             repo,
             target_root,
@@ -807,7 +1219,14 @@ fn ensure_latest_snapshot_is_clean_backup(repo: &Repository, store_path: &Path) 
     let latest_tag = latest_snapshot_tag(repo)?.context("No snapshots found in store")?;
     let manifest = load_manifest_for_tag(repo, &latest_tag)?;
     let target_root = PathBuf::from(&manifest.target_root);
-    if has_changes_against_manifest(repo, &manifest, &target_root, store_path)? {
+    let ignore_rules = load_snapshot_ignore_rules(&target_root)?;
+    if has_changes_against_manifest(
+        repo,
+        &manifest,
+        &target_root,
+        store_path,
+        ignore_rules.as_ref(),
+    )? {
         bail!(
             "Full restore requires the latest snapshot ({latest_tag}) to match the current filesystem; run `agt snapshot save` first"
         );

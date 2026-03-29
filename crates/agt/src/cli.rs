@@ -102,9 +102,31 @@ pub enum SnapshotCommands {
         /// Override snapshot store location
         #[arg(long)]
         store: Option<PathBuf>,
+        /// Show paths currently ignored by snapshot rules instead of diffing
+        #[arg(long)]
+        ignored: bool,
         /// Reduce output; repeat for no output and exit status only
         #[arg(short = 'q', action = ArgAction::Count)]
         quiet: u8,
+    },
+
+    /// Check whether snapshot ignore rules would skip the given paths
+    CheckIgnore {
+        /// Show source file, line, and matching pattern
+        #[arg(short = 'v', long)]
+        verbose: bool,
+        /// Also print paths with no matching rule (verbose mode only)
+        #[arg(short = 'n', long)]
+        non_matching: bool,
+        /// Use NUL-delimited machine-readable output
+        #[arg(short = 'z')]
+        nul: bool,
+        /// Read paths from standard input
+        #[arg(long)]
+        stdin: bool,
+        /// Paths to inspect
+        #[arg(value_name = "path")]
+        paths: Vec<String>,
     },
 
     /// List saved standalone snapshots

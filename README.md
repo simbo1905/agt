@@ -59,10 +59,12 @@ Key commands:
 - `agt session export` - Push user branch to remote origin
 - `agt session remove --id <id>` - Remove a session
 - `agt autocommit --session-id <id>` - Capture session shadow history
-- `agt snapshot save` - Save a standalone filesystem snapshot into an isolated store
+- `agt snapshot save` - Save a standalone filesystem snapshot into an isolated store, honouring `.agt-snapshot-ignore`
 - `agt snapshot list [-q]` - List standalone snapshots, with optional tag-only quiet output
 - `agt snapshot diff <snapshot-a> <snapshot-b>` - Compare two standalone snapshots
 - `agt snapshot status` - Compare the current tree against the latest standalone snapshot
+- `agt snapshot status --ignored [-q]` - List paths currently skipped by snapshot ignore rules
+- `agt snapshot check-ignore` - Explain whether snapshot rules ignore particular paths
 - `agt snapshot restore` - Restore all or part of a saved standalone snapshot
 
 See [docs/agt.1.txt](docs/agt.1.txt) for the complete man page.
@@ -75,6 +77,8 @@ AGT now uses the word "snapshot" in two different namespaces:
 - **Standalone snapshots** come from `agt snapshot ...` and live in a separate snapshot store, defaulting to `.agt-snapshots/` in the current working directory.
 
 Standalone snapshots are designed for answering "what changed?" across generated output and ignored files without interfering with normal Git history or AGT session flows.
+
+Snapshot capture can be refined with a repository-root `.agt-snapshot-ignore` file. It uses `.gitignore` pattern semantics so users can skip transient or bulky content like `.tmp/`, `dist/`, or `*.sql.gz` from standalone snapshots while still keeping those files in the working tree.
 
 Use `agt setup` to bootstrap the standalone snapshot store before the first snapshot. By default it creates `.agt-snapshots/` in the current directory and, when running inside a Git repository, ensures the repository root `.gitignore` ignores that store. `agt setup --store <path>` bootstraps a custom store path instead.
 
@@ -136,14 +140,26 @@ agt session export --session-id agent-001
 # Bootstrap standalone snapshot storage
 agt setup
 
+# Declare snapshot exclusions at the repo root
+cat > .agt-snapshot-ignore <<'EOF'
+.tmp/
+*.sql.gz
+EOF
+
 # Save a standalone snapshot before running an agent
 agt snapshot save -m "before run"
+
+# Explain whether snapshot rules ignore particular paths
+agt snapshot check-ignore -v .tmp/scratch.txt dump.sql.gz src/main.rs
 
 # List saved standalone snapshots with their messages
 agt snapshot list
 
 # Ask if anything changed since the latest standalone snapshot
 agt snapshot status -q
+
+# See which paths snapshot rules currently skip
+agt snapshot status --ignored -q
 ```
 
 ## Development

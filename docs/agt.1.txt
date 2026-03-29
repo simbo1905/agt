@@ -253,17 +253,26 @@ COMMANDS
 
               This command:
               1. Scans the target tree directly from disk
-              2. Includes files ignored by Git
-              3. Skips the normal repository .git directory and the snapshot store itself
+              2. Includes files ignored by Git unless `.agt-snapshot-ignore` excludes them
+              3. Skips the normal repository `.git` directory and the snapshot store itself
               4. Writes file contents into a dedicated snapshot object store using Git objects
               5. Records additional filesystem metadata in a snapshot manifest blob
               6. Creates an annotated tag named from the Unix epoch of the snapshot
+
+              If the snapshot target is inside a Git working tree and the repository
+              root contains `.agt-snapshot-ignore`, agt applies those rules using
+              `.gitignore` pattern semantics. This lets users exclude transient or
+              bulky paths such as `.tmp/`, `dist/`, or `*.sql.gz` from standalone
+              snapshots.
 
                By default the snapshot store lives in .agt-snapshots/ under the
                current working directory. The store location can be overridden by
                --store or AGT_SNAPSHOT_STORE. agt warns if the chosen store path is
                not ignored by Git. `agt setup` can create the store and ensure the
                default or chosen in-repo store path is ignored before the first save.
+
+              Save output reports both the number of captured files and the number
+              of files skipped by snapshot ignore rules.
 
               The snapshot manifest records, at minimum:
               • object_id
@@ -313,7 +322,7 @@ COMMANDS
                   -q, --quiet           Print only snapshot tags
                   --store <path>         Snapshot store directory
 
-       agt snapshot status [-q] [-q] [--store <path>]
+       agt snapshot status [-q] [-q] [--ignored] [--store <path>]
               Compare the current filesystem state against the latest standalone
               snapshot in the store.
 
@@ -330,9 +339,49 @@ COMMANDS
               In quiet modes agt may stop scanning as soon as it can prove the
               current tree differs from the latest snapshot.
 
+              With `--ignored`, agt instead scans the current working tree for
+              paths matched by `.agt-snapshot-ignore` and lists the paths that a
+              future `agt snapshot save` would skip. In this mode:
+
+              • default output prints one ignored path per line
+              • -q prints the same path-only output
+              • -qq exits with status 0 if any path is ignored and 1 otherwise
+
               Options:
+                  --ignored              Show paths skipped by snapshot ignore rules
                   --store <path>         Snapshot store directory
 
+
+       agt snapshot check-ignore [-v] [-n] [-z] [--stdin] [<path>...]
+              Check whether snapshot ignore rules would skip the given paths.
+
+              By default, agt prints only paths that are ignored and exits with
+              status 0 when one or more paths are ignored, or 1 when none are.
+
+              With `-v`, agt prints records in the form:
+
+              • <source>:<line>:<pattern><TAB><pathname>
+
+              A matching negation rule such as `!keep.log` is shown in verbose
+              output even though the path is not ignored overall, mirroring the
+              usability of `git check-ignore -v`.
+
+              With `-n`, agt also prints non-matching paths in verbose mode using
+              empty source, line, and pattern fields so scripts can distinguish
+              no-match from no-output.
+
+              With `-z`, agt uses NUL separators for machine-readable output.
+
+              Exit status:
+              • 0 if one or more paths are ignored
+              • 1 if no paths are ignored
+              • 128 on fatal error
+
+              Options:
+                  -v, --verbose         Show source file, line, and pattern
+                  -n, --non-matching    Also print paths with no matching rule
+                  -z                    Use NUL-delimited machine output
+                  --stdin               Read paths from standard input
        agt snapshot restore --snapshot <tag> [--target <path>] [--path <path> ...] [--store <path>]
               Restore files from a saved standalone snapshot.
 
@@ -537,8 +586,17 @@ EXAMPLES
         Bootstrap a custom standalone snapshot store path:
                $ agt setup --store tmp/agt-store
 
+        Declare paths to skip from standalone snapshots:
+               $ cat > .agt-snapshot-ignore <<'EOF'
+               $ .tmp/
+               $ *.sql.gz
+               $ EOF
+
         Save a standalone snapshot of the current tree:
                $ agt snapshot save -m "before agent run"
+
+        Explain why a path is skipped or included:
+               $ agt snapshot check-ignore -v .tmp/scratch.txt dump.sql.gz src/main.rs
 
         List standalone snapshots with their messages:
                $ agt snapshot list
@@ -551,6 +609,9 @@ EXAMPLES
 
         Use exit status only in scripts:
                $ agt snapshot status -qq
+
+        List paths currently skipped by snapshot rules:
+               $ agt snapshot status --ignored -q
 
         Restore a deleted folder from a standalone snapshot:
                $ agt snapshot restore --snapshot 01739800001234567890 --path build/cache

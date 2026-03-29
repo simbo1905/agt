@@ -594,6 +594,147 @@ fn test_snapshot_save_creates_store_and_includes_gitignored_files(
 
 #[cfg(unix)]
 #[test]
+fn test_snapshot_save_honors_agt_snapshot_ignore() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_save_honors_agt_snapshot_ignore");
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(
+        repo.worktree().join(".gitignore"),
+        ".agt-snapshots/
+",
+    )?;
+    fs::write(
+        repo.worktree().join(".agt-snapshot-ignore"),
+        ".tmp/
+*.sql.gz
+",
+    )?;
+    fs::create_dir_all(repo.worktree().join(".tmp"))?;
+    fs::write(repo.worktree().join(".tmp/skip.txt"), "skip")?;
+    fs::write(repo.worktree().join("keep.txt"), "keep")?;
+    fs::write(repo.worktree().join("dump.sql.gz"), "dump")?;
+
+    let output = agt_cmd_with_git()?
+        .args(["snapshot", "save"])
+        .current_dir(repo.worktree())
+        .output()?;
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(
+        stdout.contains("Ignored: 2"),
+        "expected ignored count in output, got: {stdout}"
+    );
+    let tag = parse_snapshot_tag(&stdout);
+    let store = repo.worktree().join(".agt-snapshots");
+    let git_path = find_real_git()?;
+
+    let keep = Command::new(&git_path)
+        .args([
+            "--git-dir",
+            store.to_str().unwrap(),
+            "show",
+            &format!("{tag}:payload/keep.txt"),
+        ])
+        .output()?;
+    assert!(keep.status.success());
+
+    let skipped = Command::new(&git_path)
+        .args([
+            "--git-dir",
+            store.to_str().unwrap(),
+            "show",
+            &format!("{tag}:payload/.tmp/skip.txt"),
+        ])
+        .output()?;
+    assert!(!skipped.status.success());
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn test_snapshot_check_ignore_verbose_and_non_matching() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_check_ignore_verbose_and_non_matching");
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(
+        repo.worktree().join(".agt-snapshot-ignore"),
+        ".tmp/
+*.sql.gz
+!important.sql.gz
+",
+    )?;
+    fs::create_dir_all(repo.worktree().join(".tmp"))?;
+    fs::write(repo.worktree().join(".tmp/skip.txt"), "skip")?;
+    fs::write(repo.worktree().join("dump.sql.gz"), "dump")?;
+    fs::write(repo.worktree().join("important.sql.gz"), "keep")?;
+    fs::write(repo.worktree().join("keep.txt"), "keep")?;
+
+    agt_cmd_with_git()?
+        .args([
+            "snapshot",
+            "check-ignore",
+            "-v",
+            "-n",
+            ".tmp/skip.txt",
+            "dump.sql.gz",
+            "important.sql.gz",
+            "keep.txt",
+        ])
+        .current_dir(repo.worktree())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            ".agt-snapshot-ignore:1:.tmp/	.tmp/skip.txt",
+        ))
+        .stdout(predicate::str::contains(
+            ".agt-snapshot-ignore:2:*.sql.gz	dump.sql.gz",
+        ))
+        .stdout(predicate::str::contains(
+            ".agt-snapshot-ignore:3:!important.sql.gz	important.sql.gz",
+        ))
+        .stdout(predicate::str::contains("::	keep.txt"));
+
+    agt_cmd_with_git()?
+        .args(["snapshot", "check-ignore", "keep.txt"])
+        .current_dir(repo.worktree())
+        .assert()
+        .failure();
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn test_snapshot_status_ignored_lists_paths() -> Result<(), Box<dyn std::error::Error>> {
+    log_test_start("test_snapshot_status_ignored_lists_paths");
+    let repo = setup_basic_repo()?;
+    write_agt_config(repo.worktree(), "agt@local", "agtsessions/")?;
+    fs::write(
+        repo.worktree().join(".agt-snapshot-ignore"),
+        ".tmp/
+*.sql.gz
+",
+    )?;
+    fs::create_dir_all(repo.worktree().join(".tmp"))?;
+    fs::write(repo.worktree().join(".tmp/skip.txt"), "skip")?;
+    fs::write(repo.worktree().join("dump.sql.gz"), "dump")?;
+    fs::write(repo.worktree().join("keep.txt"), "keep")?;
+
+    agt_cmd_with_git()?
+        .args(["snapshot", "status", "--ignored", "-q"])
+        .current_dir(repo.worktree())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(".tmp"))
+        .stdout(predicate::str::contains("dump.sql.gz"));
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
 fn test_snapshot_save_warns_when_store_is_not_gitignored() -> Result<(), Box<dyn std::error::Error>>
 {
     log_test_start("test_snapshot_save_warns_when_store_is_not_gitignored");
