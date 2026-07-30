@@ -1,5 +1,7 @@
 # AGENTS.md - Guidance for AI Coding Agents
 
+
+Do not add advertising or co-authoring signatures to commits. Do not claim you ever hold the pen or contribute any IP you are a tool not a person. Period. 
 You MAY backup files and take them out of the src try by performing a `mv x .tmp/`.
 You MUST NOT reset state using git. 
 You MUST NOT rm files that are not in git (see the you MAY mv files rule).
