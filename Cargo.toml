@@ -6,13 +6,13 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 rust-version = "1.85"
-version = "0.2.2"
+version = "0.3.0"
 authors = ["AI Coding Agent"]
 license = "MIT"
 
 [workspace.dependencies]
 # Shared runtime dependencies (member crates decide whether each is a normal dependency)
-gix = { version = "0.68", features = ["blocking-network-client", "tree-editor", "dirwalk"] }
+gix = { version = "0.68", features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls", "tree-editor", "dirwalk"] }
 gix-object = "0.46"
 gix-path = "0.10"
 gix-index = "0.37"

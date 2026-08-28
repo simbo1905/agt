@@ -45,7 +45,14 @@ is_newer_or_equal() {
 }
 
 read_version() {
-	awk -F '"' '/^version = "/ { print $2; exit }' "$1"
+	local_version=$(awk -F '"' '/^version = "/ { print $2; exit }' "$1")
+	if [ -n "$local_version" ]; then
+		printf '%s\n' "$local_version"
+		return 0
+	fi
+	if grep -q '^version.workspace = true' "$1"; then
+		awk -F '"' '/^version = "/ { print $2; exit }' "Cargo.toml"
+	fi
 }
 
 check_version_file() {

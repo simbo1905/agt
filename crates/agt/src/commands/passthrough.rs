@@ -51,6 +51,20 @@ pub fn run(
         git_binary.display()
     ));
 
+    // Git-style external-command delegation: real git executes `git-<name>`
+    // from PATH for any subcommand it has no builtin for. Mirror that for
+    // subcommands agt does not handle natively or filter; if no such helper
+    // exists, fall through to the host-git passthrough below as before.
+    if is_git_mode && !matches!(cmd_name, "branch" | "tag" | "log") {
+        if let Some(helper) = crate::delegate::find_on_path(&format!("git-{cmd_name}")) {
+            debug_log(&format!(
+                "passthrough: executing external helper {} args={args:?}",
+                helper.display()
+            ));
+            return crate::delegate::exec_external(&helper, &args[1..]);
+        }
+    }
+
     // Spawn git with stdout piped for filtering, stderr inherited
     let mut child = match Command::new(&git_binary)
         .args(args)

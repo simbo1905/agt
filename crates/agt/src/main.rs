@@ -1,13 +1,12 @@
 use crate::logging::debug_log;
 use agt_core::config::AgtConfig;
-use agt_core::snapshot;
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::Path;
 
 mod cli;
 mod commands;
-mod filter;
+mod delegate;
 mod gix_cli;
 mod isolation;
 mod logging;
@@ -48,22 +47,20 @@ fn main() -> Result<()> {
             .with_context(|| format!("Failed to change to directory: {}", dir.display()))?;
     }
 
-    // Handle commands that do not require an existing repository.
-    if let Some(Commands::Setup { store }) = cli.command.clone() {
-        return snapshot::setup(store.as_deref());
+    // Git-style PATH delegation: `agt snapshot ...` and `agt setup ...` execute
+    // the standalone agt-snapshot binary from PATH with the remaining arguments
+    // passed verbatim, before any config load or repo discovery (snapshot
+    // commands operate on a --target that need not be inside any repo).
+    if let Some(name) = cli.args.first().map(String::as_str) {
+        if matches!(name, "snapshot" | "setup") {
+            return delegate_to_agt_snapshot(name, &cli.args[1..]);
+        }
     }
 
     // Handle init command before discovering repo (init doesn't need existing repo)
     if let Some(Commands::Clone { remote_url, path }) = cli.command.clone() {
         let config = AgtConfig::load_for_init();
         return commands::clone::run(&remote_url, path.as_deref(), &config);
-    }
-
-    // Handle snapshot commands before discovering repo (snapshot save/status/list/
-    // restore/diff/check-ignore operate on a --target that need not be inside any repo;
-    // host-repo discovery for the store warning happens inside agt-core).
-    if let Some(Commands::Snapshot(snapshot_cmd)) = cli.command.clone() {
-        return run_snapshot(snapshot_cmd);
     }
 
     // Load configuration (from ~/.agtconfig and .agt/config)
@@ -77,9 +74,7 @@ fn main() -> Result<()> {
 
     // Route to appropriate command handler
     match cli.command {
-        Some(Commands::Setup { .. }) => unreachable!(),
         Some(Commands::Clone { .. }) => unreachable!(), // handled above
-        Some(Commands::Snapshot(_)) => unreachable!(),  // handled above
         Some(Commands::Session(session_cmd)) => commands::session::run(&repo, session_cmd, &config),
         Some(Commands::Autocommit {
             session_id,
@@ -112,42 +107,14 @@ fn main() -> Result<()> {
     }
 }
 
-fn run_snapshot(command: cli::SnapshotCommands) -> Result<()> {
-    use cli::SnapshotCommands;
-
-    match command {
-        SnapshotCommands::Save {
-            target,
-            store,
-            message,
-        } => {
-            let config = AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
-            snapshot::save(&config, &target, store.as_deref(), message.as_deref())
+fn delegate_to_agt_snapshot(name: &str, args: &[String]) -> Result<()> {
+    match delegate::find_on_path("agt-snapshot") {
+        Some(program) => delegate::exec_external(&program, args),
+        None => {
+            eprintln!("agt: '{name}' is not an agt command. See 'agt --help'.");
+            eprintln!("agt: 'agt-snapshot' was not found on PATH; install the agt-snapshot binary");
+            std::process::exit(1);
         }
-        SnapshotCommands::Diff {
-            before,
-            after,
-            store,
-        } => snapshot::check(&before, &after, store.as_deref()),
-        SnapshotCommands::Status {
-            store,
-            ignored,
-            quiet,
-        } => snapshot::status(store.as_deref(), ignored, quiet),
-        SnapshotCommands::CheckIgnore {
-            verbose,
-            non_matching,
-            nul,
-            stdin,
-            paths,
-        } => snapshot::check_ignore_flags(verbose, non_matching, nul, stdin, &paths),
-        SnapshotCommands::List { store, quiet } => snapshot::list(store.as_deref(), quiet),
-        SnapshotCommands::Restore {
-            snapshot: snapshot_name,
-            target,
-            path,
-            store,
-        } => snapshot::restore(&snapshot_name, &target, &path, store.as_deref()),
     }
 }
 

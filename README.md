@@ -94,9 +94,7 @@ Use `agt setup` to bootstrap the standalone snapshot store before the first snap
 
 The snapshot subsystem also ships as a standalone binary, `agt-snapshot`. Install just that binary and run `agt-snapshot save`, `list`, `diff`, `status`, `check-ignore`, `restore`, and `setup` in any repository — or in a plain directory — without installing the rest of AGT.
 
-The standalone binary has identical behaviour, options, and exit codes to the corresponding `agt snapshot ...` commands (`agt-snapshot setup` mirrors `agt setup`). `agt snapshot ...` continues to work as before via the full `agt` tool.
-
-Note: invoking `agt snapshot ...` so that it transparently executes the `agt-snapshot` binary from your PATH is planned for a later release; today the two are separate entry points. See [docs/agt.1.txt](docs/agt.1.txt) for details.
+The standalone binary has identical behaviour, options, and exit codes to the corresponding `agt snapshot ...` commands (`agt-snapshot setup` mirrors `agt setup`). Since 0.3.0, `agt snapshot ...` and `agt setup` are pass-throughs: `agt` locates the standalone `agt-snapshot` binary on your PATH and execs it with the original arguments, so the exit code is exactly the `agt-snapshot` exit code. If no `agt-snapshot` binary is found on PATH, `agt` reports a git-style error and exits non-zero. See [docs/agt.1.txt](docs/agt.1.txt) for details.
 
 ## Configuration
 
