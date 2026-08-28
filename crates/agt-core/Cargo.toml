@@ -1,0 +1,21 @@
+[package]
+name = "agt-core"
+version = "0.2.2"
+edition = "2021"
+authors = ["AI Coding Agent"]
+license = "MIT"
+description = "Core configuration and snapshot engine shared by agt and agt-snapshot"
+
+[dependencies]
+gix = { workspace = true }
+gix-object = { workspace = true }
+gix-path = { workspace = true }
+gix-ref = { workspace = true }
+jwalk = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

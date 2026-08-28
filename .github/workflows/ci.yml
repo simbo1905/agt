@@ -141,7 +141,7 @@ jobs:
         run: bash ./.github/scripts/run-with-agt-log.sh pwsh -NoProfile -File ./.github/scripts/diagnose-windows-git.ps1
       - name: Snapshot integration tests
         shell: bash
-        run: bash ./.github/scripts/run-with-agt-log.sh cargo test test_snapshot_ --test integration_tests -- --nocapture
+        run: bash ./.github/scripts/run-with-agt-log.sh cargo test -p agt-snapshot test_snapshot_ --test snapshot_tests -- --nocapture
       - name: Full test suite
         if: runner.os != 'Windows'
         shell: bash
@@ -228,7 +228,7 @@ jobs:
       - name: Lint
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Snapshot integration tests
-        run: cargo test test_snapshot_ --test integration_tests -- --nocapture
+        run: cargo test -p agt-snapshot test_snapshot_ --test snapshot_tests -- --nocapture
       - name: Full test suite
         run: cargo test --workspace --all-targets --all-features -- --nocapture
       - name: Build release binaries

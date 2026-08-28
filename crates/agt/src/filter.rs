@@ -1,4 +1,4 @@
-use crate::config::AgtConfig;
+use agt_core::config::AgtConfig;
 use gix::Commit;
 
 /// Check if a reference should be hidden from user view (agent branches)

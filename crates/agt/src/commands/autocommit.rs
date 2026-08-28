@@ -1,5 +1,5 @@
-use crate::config::AgtConfig;
 use crate::path_util;
+use agt_core::config::AgtConfig;
 use anyhow::{Context, Result};
 use gix::object::tree::EntryKind;
 use gix::Repository;

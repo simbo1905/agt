@@ -1,4 +1,4 @@
-use crate::config::AgtConfig;
+use agt_core::config::AgtConfig;
 use crate::gix_cli::{find_worktree_binary, repo_base_path};
 use crate::isolation::SessionPaths;
 use crate::path_util;
