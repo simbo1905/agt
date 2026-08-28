@@ -68,6 +68,9 @@ jobs:
             fi
             publish=true
             release_kind=semver
+            if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-agtsnapshot$ ]]; then
+              release_kind=agtsnapshot
+            fi
             release_tag="release/${version}"
             release_title="${version}"
             binary_suffix="${version}"
@@ -160,12 +163,19 @@ jobs:
           BINARY_SUFFIX: ${{ needs.release-meta.outputs.binary_suffix }}
           ASSET_SUFFIX: ${{ needs.release-meta.outputs.asset_suffix }}
           ARCHIVE_NAME: ${{ matrix.archive_name }}
+          RELEASE_KIND: ${{ needs.release-meta.outputs.release_kind }}
         run: |
           staging="dist/release/${{ matrix.artifact_name }}"
           mkdir -p "$staging"
-          cp target/release/agt "$staging/agt-${BINARY_SUFFIX}"
-          cp target/release/agt-worktree "$staging/agt-worktree-${BINARY_SUFFIX}"
-          archive="dist/${ARCHIVE_NAME}-${ASSET_SUFFIX}.tar.gz"
+          if [[ "$RELEASE_KIND" == "agtsnapshot" ]]; then
+            cp target/release/agt-snapshot "$staging/agt-snapshot-${BINARY_SUFFIX}"
+            archive_base="agt-snapshot-${ARCHIVE_NAME#agt-}"
+          else
+            cp target/release/agt "$staging/agt-${BINARY_SUFFIX}"
+            cp target/release/agt-worktree "$staging/agt-worktree-${BINARY_SUFFIX}"
+            archive_base="${ARCHIVE_NAME}"
+          fi
+          archive="dist/${archive_base}-${ASSET_SUFFIX}.tar.gz"
           tar -C "$staging" -czf "$archive" .
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
       - name: Package release bundle (Windows)
@@ -176,12 +186,19 @@ jobs:
           BINARY_SUFFIX: ${{ needs.release-meta.outputs.binary_suffix }}
           ASSET_SUFFIX: ${{ needs.release-meta.outputs.asset_suffix }}
           ARCHIVE_NAME: ${{ matrix.archive_name }}
+          RELEASE_KIND: ${{ needs.release-meta.outputs.release_kind }}
         run: |
           $staging = "dist/release/${{ matrix.artifact_name }}"
           New-Item -ItemType Directory -Force -Path $staging | Out-Null
-          Copy-Item "target/release/agt.exe" "$staging/agt-$env:BINARY_SUFFIX.exe"
-          Copy-Item "target/release/agt-worktree.exe" "$staging/agt-worktree-$env:BINARY_SUFFIX.exe"
-          $archive = "dist/$env:ARCHIVE_NAME-$env:ASSET_SUFFIX.zip"
+          if ($env:RELEASE_KIND -eq "agtsnapshot") {
+            Copy-Item "target/release/agt-snapshot.exe" "$staging/agt-snapshot-$env:BINARY_SUFFIX.exe"
+            $archiveBase = $env:ARCHIVE_NAME -replace '^agt-', 'agt-snapshot-'
+          } else {
+            Copy-Item "target/release/agt.exe" "$staging/agt-$env:BINARY_SUFFIX.exe"
+            Copy-Item "target/release/agt-worktree.exe" "$staging/agt-worktree-$env:BINARY_SUFFIX.exe"
+            $archiveBase = $env:ARCHIVE_NAME
+          }
+          $archive = "dist/$archiveBase-$env:ASSET_SUFFIX.zip"
           Compress-Archive -Path "$staging/*" -DestinationPath $archive -Force
           "archive=$archive" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
       - name: Upload release bundle (Unix)
@@ -240,12 +257,19 @@ jobs:
         env:
           BINARY_SUFFIX: ${{ needs.release-meta.outputs.binary_suffix }}
           ASSET_SUFFIX: ${{ needs.release-meta.outputs.asset_suffix }}
+          RELEASE_KIND: ${{ needs.release-meta.outputs.release_kind }}
         run: |
           staging="dist/release/debian-trixie"
           mkdir -p "$staging"
-          cp target/release/agt "$staging/agt-${BINARY_SUFFIX}"
-          cp target/release/agt-worktree "$staging/agt-worktree-${BINARY_SUFFIX}"
-          archive="dist/agt-debian-trixie-${ASSET_SUFFIX}.tar.gz"
+          if [[ "$RELEASE_KIND" == "agtsnapshot" ]]; then
+            cp target/release/agt-snapshot "$staging/agt-snapshot-${BINARY_SUFFIX}"
+            archive_base="agt-snapshot-debian-trixie"
+          else
+            cp target/release/agt "$staging/agt-${BINARY_SUFFIX}"
+            cp target/release/agt-worktree "$staging/agt-worktree-${BINARY_SUFFIX}"
+            archive_base="agt-debian-trixie"
+          fi
+          archive="dist/${archive_base}-${ASSET_SUFFIX}.tar.gz"
           tar -C "$staging" -czf "$archive" .
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
       - name: Upload release bundle

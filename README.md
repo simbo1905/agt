@@ -41,6 +41,8 @@ agt/
 │   ├── agt/            # Rust implementation of agt
 │   │   ├── Cargo.toml
 │   │   └── src/
+│   ├── agt-core/       # Shared library: agt configuration and snapshot engine
+│   ├── agt-snapshot/   # Standalone agt-snapshot binary crate
 │   └── agt-worktree/   # Sandbox helper binary
 └── CODING_PROMPT.md    # Implementation prompt for AI agents
 ```
@@ -87,6 +89,14 @@ Standalone snapshots are designed for answering "what changed?" across generated
 Snapshot capture can be refined with a repository-root `.agt-snapshot-ignore` file. It uses `.gitignore` pattern semantics so users can skip transient or bulky content like `.tmp/`, `dist/`, or `*.sql.gz` from standalone snapshots while still keeping those files in the working tree.
 
 Use `agt setup` to bootstrap the standalone snapshot store before the first snapshot. By default it creates `.agt-snapshots/` in the current directory and, when running inside a Git repository, ensures the repository root `.gitignore` ignores that store. `agt setup --store <path>` bootstraps a custom store path instead.
+
+### Standalone agt-snapshot
+
+The snapshot subsystem also ships as a standalone binary, `agt-snapshot`. Install just that binary and run `agt-snapshot save`, `list`, `diff`, `status`, `check-ignore`, `restore`, and `setup` in any repository — or in a plain directory — without installing the rest of AGT.
+
+The standalone binary has identical behaviour, options, and exit codes to the corresponding `agt snapshot ...` commands (`agt-snapshot setup` mirrors `agt setup`). `agt snapshot ...` continues to work as before via the full `agt` tool.
+
+Note: invoking `agt snapshot ...` so that it transparently executes the `agt-snapshot` binary from your PATH is planned for a later release; today the two are separate entry points. See [docs/agt.1.txt](docs/agt.1.txt) for details.
 
 ## Configuration
 
@@ -172,7 +182,7 @@ agt snapshot status --ignored -q
 
 This is a polyglot monorepo managed with mise. Currently includes:
 
-- **Rust** - Core `agt` tool (crates/agt) and sandbox helper (crates/agt-worktree)
+- **Rust** - Core `agt` tool (crates/agt), shared configuration and snapshot library (crates/agt-core), standalone `agt-snapshot` binary (crates/agt-snapshot), and sandbox helper (crates/agt-worktree)
 
 ### Rust Version (MSRV)
 

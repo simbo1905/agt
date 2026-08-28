@@ -6,6 +6,7 @@ NAME
 SYNOPSIS
        agt <command> [options]
        git [--disable-agt] <command> [options]
+       agt-snapshot <command> [options]
 
 DESCRIPTION
        agt is a Git wrapper that provides dual-mode operation for managing AI
@@ -465,8 +466,55 @@ COMMANDS
        git log
               Shows commit history, excluding commits by agt.agentEmail in git mode.
 
-       git tag
-              Lists tags, excluding those matching agt.branchPrefix in git mode.
+        git tag
+               Lists tags, excluding those matching agt.branchPrefix in git mode.
+
+STANDALONE AGT-SNAPSHOT BINARY
+
+       agt-snapshot <command> [options]
+               Standalone binary containing only the standalone snapshot
+               subsystem. Installing just the agt-snapshot binary is enough to
+               bootstrap and use a snapshot store; the rest of AGT (git mode,
+               sessions, autocommit) is not required and no host repository is
+               needed beyond what each command itself uses.
+
+               Supported commands, each documented above:
+
+               • agt-snapshot setup [--store <path>]
+                      See agt setup.
+
+               • agt-snapshot save [--target <path>] [--store <path>]
+                 [-m <message>]
+                      See agt snapshot save.
+
+               • agt-snapshot diff <snapshot-a> <snapshot-b> [--store <path>]
+                      See agt snapshot diff.
+
+               • agt-snapshot list [-q] [--store <path>]
+                      See agt snapshot list.
+
+               • agt-snapshot status [-q] [-qq] [--ignored] [--store <path>]
+                      See agt snapshot status.
+
+               • agt-snapshot check-ignore [-v] [-n] [-z] [--stdin]
+                 [<path>...]
+                      See agt snapshot check-ignore.
+
+               • agt-snapshot restore --snapshot <tag> [--target <path>]
+                 [--path <path> ...] [--store <path>]
+                      See agt snapshot restore.
+
+               Each standalone subcommand has identical behaviour, options,
+               output, and exit codes to the corresponding agt setup or
+               agt snapshot subcommand: substitute agt-snapshot <subcommand>
+               for agt snapshot <subcommand> and agt-snapshot setup for
+               agt setup.
+
+               The full agt tool is unchanged: agt snapshot ... and agt setup
+               continue to work exactly as documented in this manual. Running
+               agt snapshot ... so that it finds and executes the standalone
+               agt-snapshot binary from PATH is planned for a later release
+               and is not behaviour of the current version.
 
 OPTIONS
    GLOBAL OPTIONS
