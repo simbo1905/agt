@@ -1,7 +1,7 @@
 use crate::commands::git_porcelain;
-use crate::config::AgtConfig;
 use crate::gix_cli::find_git_binary;
 use crate::logging::{debug_log, is_enabled};
+use agt_core::config::AgtConfig;
 use anyhow::Result;
 use gix::Repository;
 use std::io::{BufRead, BufReader};

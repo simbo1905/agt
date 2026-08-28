@@ -1,5 +1,5 @@
-use crate::config::AgtConfig;
 use crate::gix_cli::{find_worktree_binary, repo_base_path};
+use agt_core::config::AgtConfig;
 use anyhow::{Context, Result};
 use gix::Repository;
 use serde::Deserialize;

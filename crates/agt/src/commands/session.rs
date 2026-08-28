@@ -1,8 +1,8 @@
 use crate::cli::SessionCommands;
-use crate::config::AgtConfig;
 use crate::gix_cli::{find_worktree_binary, repo_base_path};
 use crate::isolation::SessionPaths;
 use crate::path_util;
+use agt_core::config::AgtConfig;
 use anyhow::{bail, Context, Result};
 use gix::Repository;
 use gix_ref::transaction::PreviousValue;

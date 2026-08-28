@@ -1,5 +1,5 @@
-use crate::config::AgtConfig;
 use crate::path_util;
+use agt_core::config::AgtConfig;
 use anyhow::{Context, Result};
 use gix_features::progress::Discard;
 use gix_fs::Capabilities;

@@ -3,13 +3,12 @@ use anyhow::{bail, Context, Result};
 use gix::bstr::BStr;
 use gix::bstr::ByteSlice;
 use gix::object::tree::EntryKind;
-use gix::Repository;
 use gix_object::{compute_hash, Kind, Tree};
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, Metadata};
-use std::io::{self, Cursor, Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::{self, BufRead, Cursor, Read, Write};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 const DEFAULT_STORE_DIR: &str = ".agt-snapshots";
@@ -19,16 +18,17 @@ const PAYLOAD_PREFIX: &str = "payload";
 const MANIFEST_MAGIC: &[u8; 8] = b"AGTSNP01";
 const MANIFEST_VERSION: u32 = 1;
 const SNAPSHOT_LIST_WIDTH: usize = 80;
+const SNAPSHOT_IGNORE_FILE: &str = ".agt-snapshot-ignore";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct SnapshotManifest {
+pub struct SnapshotManifest {
     target_root: String,
     created_at_ns: u128,
     records: Vec<SnapshotRecord>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct SnapshotRecord {
+pub struct SnapshotRecord {
     path: String,
     kind: RecordKind,
     object_id: String,
@@ -45,7 +45,7 @@ struct SnapshotRecord {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RecordKind {
+pub enum RecordKind {
     File,
     Executable,
     Symlink,
@@ -68,8 +68,29 @@ enum PlatformFileId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct PlatformFileId;
 
+#[derive(Clone, Debug)]
+struct SnapshotIgnoreRules {
+    repo_root: PathBuf,
+    source_path: PathBuf,
+    search: gix::ignore::Search,
+    case: gix::glob::pattern::Case,
+}
+
+#[derive(Clone, Debug)]
+struct SnapshotIgnoreMatch {
+    ignored: bool,
+    source: String,
+    line_number: usize,
+    pattern: String,
+}
+
+#[derive(Default)]
+struct SnapshotCapture {
+    records: Vec<SnapshotRecord>,
+    ignored_file_count: usize,
+}
+
 pub fn save(
-    repo: &Repository,
     config: &AgtConfig,
     target: &Path,
     store: Option<&Path>,
@@ -81,16 +102,27 @@ pub fn save(
         .canonicalize()
         .with_context(|| format!("Failed to resolve target {}", target.display()))?;
     let store_path = resolve_store_path(store, &current_dir)?;
-    warn_if_store_not_ignored(repo, config, &store_path)?;
+    if let Some(work_dir) = discover_repo_root(&current_dir)? {
+        warn_if_store_not_ignored(&work_dir, config, &store_path)?;
+    }
     let snapshot_repo = open_or_init_snapshot_repo(&store_path)?;
+    let ignore_rules = load_snapshot_ignore_rules(&target_root)?;
 
     let created_at_ns = now_ns();
-    let mut records = capture_records(&snapshot_repo, &target_root, &store_path, true)?;
-    records.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut capture = capture_records(
+        &snapshot_repo,
+        &target_root,
+        &store_path,
+        ignore_rules.as_ref(),
+        true,
+    )?;
+    capture
+        .records
+        .sort_by(|left, right| left.path.cmp(&right.path));
     let manifest = SnapshotManifest {
         target_root: normalize_path(&target_root),
         created_at_ns,
-        records,
+        records: capture.records,
     };
 
     let tag_name = next_tag_name(&snapshot_repo, created_at_ns)?;
@@ -111,6 +143,7 @@ pub fn save(
     println!("Saved snapshot {tag_name}");
     println!("Store: {}", store_path.display());
     println!("Files: {}", manifest.records.len());
+    println!("Ignored: {}", capture.ignored_file_count);
     Ok(())
 }
 
@@ -128,7 +161,7 @@ pub fn setup(store: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-fn is_timestamp_tag(tag: &str) -> Option<u64> {
+pub fn is_timestamp_tag(tag: &str) -> Option<u64> {
     let digits: String = tag.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.len() >= 17 {
         digits.parse::<u64>().ok()
@@ -137,7 +170,7 @@ fn is_timestamp_tag(tag: &str) -> Option<u64> {
     }
 }
 
-pub fn check(_repo: &Repository, before: &str, after: &str, store: Option<&Path>) -> Result<()> {
+pub fn check(before: &str, after: &str, store: Option<&Path>) -> Result<()> {
     ensure_supported_platform()?;
     let current_dir = std::env::current_dir()?;
     let store_path = resolve_store_path(store, &current_dir)?;
@@ -159,18 +192,28 @@ pub fn check(_repo: &Repository, before: &str, after: &str, store: Option<&Path>
     Ok(())
 }
 
-pub fn status(_repo: &Repository, store: Option<&Path>, quiet: u8) -> Result<()> {
+pub fn status(store: Option<&Path>, ignored: bool, quiet: u8) -> Result<()> {
     ensure_supported_platform()?;
     let current_dir = std::env::current_dir()?;
     let store_path = resolve_store_path(store, &current_dir)?;
+    if ignored {
+        return status_ignored(&current_dir, &store_path, quiet);
+    }
+
     let snapshot_repo = open_snapshot_repo(&store_path)?;
     let latest_tag = latest_snapshot_tag(&snapshot_repo)?.context("No snapshots found in store")?;
     let manifest = load_manifest_for_tag(&snapshot_repo, &latest_tag)?;
     let target_root = PathBuf::from(&manifest.target_root);
+    let ignore_rules = load_snapshot_ignore_rules(&target_root)?;
 
     if quiet > 0 {
-        let changed =
-            has_changes_against_manifest(&snapshot_repo, &manifest, &target_root, &store_path)?;
+        let changed = has_changes_against_manifest(
+            &snapshot_repo,
+            &manifest,
+            &target_root,
+            &store_path,
+            ignore_rules.as_ref(),
+        )?;
         if quiet > 1 {
             if changed {
                 std::process::exit(1);
@@ -185,7 +228,14 @@ pub fn status(_repo: &Repository, store: Option<&Path>, quiet: u8) -> Result<()>
     let current_manifest = SnapshotManifest {
         target_root: manifest.target_root.clone(),
         created_at_ns: now_ns(),
-        records: capture_records(&snapshot_repo, &target_root, &store_path, false)?,
+        records: capture_records(
+            &snapshot_repo,
+            &target_root,
+            &store_path,
+            ignore_rules.as_ref(),
+            false,
+        )?
+        .records,
     };
     let diff = diff_manifests(&manifest, &current_manifest);
     println!("Latest snapshot {latest_tag}");
@@ -196,7 +246,137 @@ pub fn status(_repo: &Repository, store: Option<&Path>, quiet: u8) -> Result<()>
     Ok(())
 }
 
-pub fn list(_repo: &Repository, store: Option<&Path>, quiet: bool) -> Result<()> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckIgnoreFormat {
+    Plain,
+    Verbose,
+    VerboseWithNonMatching,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckIgnoreTerminator {
+    Newline,
+    Nul,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckIgnoreSource {
+    Paths,
+    Stdin,
+}
+
+pub struct CheckIgnoreOptions {
+    pub format: CheckIgnoreFormat,
+    pub terminator: CheckIgnoreTerminator,
+    pub source: CheckIgnoreSource,
+}
+
+impl CheckIgnoreOptions {
+    fn from_flags(verbose: bool, non_matching: bool, nul: bool, stdin: bool) -> Self {
+        let format = if verbose {
+            if non_matching {
+                CheckIgnoreFormat::VerboseWithNonMatching
+            } else {
+                CheckIgnoreFormat::Verbose
+            }
+        } else {
+            CheckIgnoreFormat::Plain
+        };
+        let terminator = if nul {
+            CheckIgnoreTerminator::Nul
+        } else {
+            CheckIgnoreTerminator::Newline
+        };
+        let source = if stdin {
+            CheckIgnoreSource::Stdin
+        } else {
+            CheckIgnoreSource::Paths
+        };
+        Self {
+            format,
+            terminator,
+            source,
+        }
+    }
+}
+
+/// Dispatches `check-ignore` from CLI flags, preserving the `git check-ignore`
+/// exit-code contract (0/1/128).
+pub fn check_ignore_flags(
+    verbose: bool,
+    non_matching: bool,
+    nul: bool,
+    stdin: bool,
+    paths: &[String],
+) -> Result<()> {
+    if non_matching && !verbose {
+        eprintln!("fatal: --non-matching is only valid with --verbose");
+        std::process::exit(128);
+    }
+    check_ignore(
+        CheckIgnoreOptions::from_flags(verbose, non_matching, nul, stdin),
+        paths,
+    )
+}
+
+pub fn check_ignore(options: CheckIgnoreOptions, paths: &[String]) -> Result<()> {
+    ensure_supported_platform()?;
+
+    let current_dir = std::env::current_dir()?;
+    let ignore_rules = load_snapshot_ignore_rules(&current_dir)?;
+    let is_nul = options.terminator == CheckIgnoreTerminator::Nul;
+    let inputs =
+        collect_check_ignore_inputs(options.source == CheckIgnoreSource::Stdin, is_nul, paths)?;
+
+    let mut saw_ignored = false;
+    let mut saw_match = false;
+    let mut stdout = io::stdout().lock();
+
+    for input in inputs {
+        let match_ = ignore_rules
+            .as_ref()
+            .and_then(|rules| rules.match_for_input(&input, &current_dir));
+        if let Some(info) = &match_ {
+            if info.ignored {
+                saw_ignored = true;
+            }
+            saw_match = true;
+        }
+
+        match options.format {
+            CheckIgnoreFormat::Verbose | CheckIgnoreFormat::VerboseWithNonMatching => {
+                if let Some(info) = match_ {
+                    write_check_ignore_verbose(&mut stdout, &input, &info, is_nul)?;
+                } else if options.format == CheckIgnoreFormat::VerboseWithNonMatching {
+                    write_check_ignore_non_matching(&mut stdout, &input, is_nul)?;
+                }
+            }
+            CheckIgnoreFormat::Plain => {
+                if let Some(info) = match_ {
+                    if info.ignored {
+                        write_check_ignore_plain(&mut stdout, &input, is_nul)?;
+                    }
+                }
+            }
+        }
+    }
+
+    match options.format {
+        CheckIgnoreFormat::Verbose | CheckIgnoreFormat::VerboseWithNonMatching => {
+            if saw_match {
+                return Ok(());
+            }
+        }
+        CheckIgnoreFormat::Plain => {
+            if saw_ignored {
+                return Ok(());
+            }
+        }
+    }
+    std::process::exit(1)
+}
+
+pub fn list(store: Option<&Path>, quiet: bool) -> Result<()> {
     ensure_supported_platform()?;
     let current_dir = std::env::current_dir()?;
     let store_path = resolve_store_path(store, &current_dir)?;
@@ -236,6 +416,106 @@ pub fn list(_repo: &Repository, store: Option<&Path>, quiet: bool) -> Result<()>
     Ok(())
 }
 
+fn status_ignored(target_root: &Path, store_path: &Path, quiet: u8) -> Result<()> {
+    let ignored_paths = collect_ignored_paths(
+        target_root,
+        store_path,
+        load_snapshot_ignore_rules(target_root)?.as_ref(),
+    )?;
+    if quiet > 1 {
+        if ignored_paths.is_empty() {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
+    for path in ignored_paths {
+        println!("{path}");
+    }
+    Ok(())
+}
+
+fn collect_check_ignore_inputs(stdin: bool, nul: bool, paths: &[String]) -> Result<Vec<String>> {
+    let mut inputs = paths.to_vec();
+    if !stdin {
+        return Ok(inputs);
+    }
+
+    if nul {
+        let mut buf = Vec::new();
+        io::stdin().read_to_end(&mut buf)?;
+        inputs.extend(
+            buf.split(|byte| *byte == 0)
+                .filter(|entry| !entry.is_empty())
+                .map(|entry| String::from_utf8_lossy(entry).into_owned()),
+        );
+        return Ok(inputs);
+    }
+
+    let mut line = String::new();
+    let mut handle = io::stdin().lock();
+    loop {
+        line.clear();
+        let bytes = handle.read_line(&mut line)?;
+        if bytes == 0 {
+            break;
+        }
+        if let Some(stripped) = line.strip_suffix('\n') {
+            let stripped = stripped.strip_suffix('\r').unwrap_or(stripped);
+            inputs.push(stripped.to_string());
+        } else {
+            inputs.push(line.clone());
+        }
+    }
+    Ok(inputs)
+}
+
+fn write_check_ignore_plain(out: &mut dyn Write, input: &str, nul: bool) -> Result<()> {
+    if nul {
+        out.write_all(input.as_bytes())?;
+        out.write_all(&[0])?;
+    } else {
+        writeln!(out, "{input}")?;
+    }
+    Ok(())
+}
+
+fn write_check_ignore_verbose(
+    out: &mut dyn Write,
+    input: &str,
+    info: &SnapshotIgnoreMatch,
+    nul: bool,
+) -> Result<()> {
+    if nul {
+        out.write_all(info.source.as_bytes())?;
+        out.write_all(&[0])?;
+        out.write_all(info.line_number.to_string().as_bytes())?;
+        out.write_all(&[0])?;
+        out.write_all(info.pattern.as_bytes())?;
+        out.write_all(&[0])?;
+        out.write_all(input.as_bytes())?;
+        out.write_all(&[0])?;
+    } else {
+        writeln!(
+            out,
+            "{}:{}:{}	{}",
+            info.source, info.line_number, info.pattern, input
+        )?;
+    }
+    Ok(())
+}
+
+fn write_check_ignore_non_matching(out: &mut dyn Write, input: &str, nul: bool) -> Result<()> {
+    if nul {
+        out.write_all(&[0, 0, 0])?;
+        out.write_all(input.as_bytes())?;
+        out.write_all(&[0])?;
+    } else {
+        writeln!(out, "::	{input}")?;
+    }
+    Ok(())
+}
+
 fn normalize_snapshot_message(message: String) -> String {
     message.replace('\n', " ").trim().to_string()
 }
@@ -257,7 +537,6 @@ fn format_snapshot_list_line(tag: &str, message: &str) -> String {
 }
 
 pub fn restore(
-    _repo: &Repository,
     snapshot: &str,
     target: &Path,
     paths: &[PathBuf],
@@ -291,6 +570,9 @@ pub fn restore(
             PathBuf::new(),
             &mut expected_paths,
         )?;
+        for path in &expected_paths {
+            contained_join(&target_root, path.as_os_str())?;
+        }
         remove_paths_not_in_snapshot(&target_root, &expected_paths, Path::new(""), &store_path)?;
         restore_tree_to_disk(
             &snapshot_repo,
@@ -301,27 +583,28 @@ pub fn restore(
     } else {
         let mut restore_entries = Vec::new();
         for path in paths {
+            let relative = contained_relative(path.as_os_str())?;
             let scope = path_to_tree(path);
             let scoped_path = format!("{PAYLOAD_PREFIX}/{scope}");
             let entry = tree
                 .lookup_entry_by_path(Path::new(&scoped_path))?
                 .with_context(|| format!("Snapshot path not found: {}", path.display()))?;
-            let destination = target_root.join(path);
+            let destination = target_root.join(&relative);
             if restore_would_clobber(
                 &snapshot_repo,
                 entry.object_id(),
                 entry.mode().kind(),
-                path,
+                &relative,
                 &target_root,
             )? && !confirm_overwrite(&destination)?
             {
                 bail!("Restore cancelled by user")
             }
-            restore_entries.push((entry.object_id(), entry.mode().kind(), path.clone()));
+            restore_entries.push((entry.object_id(), entry.mode().kind(), relative));
         }
 
-        for (object_id, kind, path) in restore_entries {
-            restore_entry_to_disk(&snapshot_repo, object_id, kind, &path, &target_root)?;
+        for (object_id, kind, destination) in restore_entries {
+            restore_entry_to_disk(&snapshot_repo, object_id, kind, &destination, &target_root)?;
         }
     }
 
@@ -345,13 +628,53 @@ fn ensure_supported_platform() -> Result<()> {
 }
 
 fn resolve_store_path(store: Option<&Path>, current_dir: &Path) -> Result<PathBuf> {
-    if let Some(path) = store {
-        return absolutize(path, current_dir);
+    let candidate = match store {
+        Some(path) => absolutize(path, current_dir)?,
+        None => match std::env::var("AGT_SNAPSHOT_STORE") {
+            Ok(path) => absolutize(Path::new(&path), current_dir)?,
+            Err(_) => absolutize(Path::new(DEFAULT_STORE_DIR), current_dir)?,
+        },
+    };
+    canonicalize_store_path(&candidate)
+}
+
+/// Canonicalizes the store path so that symlinked or `..`-spelled locations
+/// always compare equal to the canonical paths produced by walking the
+/// canonicalized target. Falls back to a lexical resolution when the store
+/// does not exist yet (nothing along a non-existent tail can be a symlink,
+/// so lexical `..`/`.` handling is exact there).
+fn canonicalize_store_path(path: &Path) -> Result<PathBuf> {
+    let mut resolved = PathBuf::new();
+    let mut tail: Vec<OsString> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => {
+                if tail.is_empty() {
+                    resolved.push(component.as_os_str());
+                }
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if tail.pop().is_none() {
+                    resolved.pop();
+                }
+            }
+            Component::Normal(part) => {
+                let candidate = resolved.join(part);
+                match candidate.canonicalize() {
+                    Ok(canonical) if tail.is_empty() => resolved = canonical,
+                    _ => tail.push(part.to_os_string()),
+                }
+            }
+        }
     }
-    if let Ok(path) = std::env::var("AGT_SNAPSHOT_STORE") {
-        return absolutize(Path::new(&path), current_dir);
+    if resolved.as_os_str().is_empty() {
+        bail!("Failed to resolve snapshot store path {}", path.display());
     }
-    absolutize(Path::new(DEFAULT_STORE_DIR), current_dir)
+    for part in tail {
+        resolved.push(part);
+    }
+    Ok(resolved)
 }
 
 fn absolutize(path: &Path, base: &Path) -> Result<PathBuf> {
@@ -362,7 +685,50 @@ fn absolutize(path: &Path, base: &Path) -> Result<PathBuf> {
     })
 }
 
-fn open_or_init_snapshot_repo(path: &Path) -> Result<Repository> {
+/// Joins a store- or CLI-controlled relative path onto `root`, rejecting any
+/// component that could escape the target (absolute paths, `..`, `.`, Windows
+/// prefixes, NUL bytes). All restore-time joins (writes AND the deletion set)
+/// must go through this function.
+pub fn contained_join(root: &Path, relative: &OsStr) -> Result<PathBuf> {
+    Ok(root.join(contained_relative(relative)?))
+}
+
+fn contained_relative(relative: &OsStr) -> Result<PathBuf> {
+    let relative_path = Path::new(relative);
+    let mut joined = PathBuf::new();
+    for component in relative_path.components() {
+        match component {
+            Component::Normal(part) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::ffi::OsStrExt;
+                    if part.as_bytes().contains(&0) {
+                        bail!(
+                            "Snapshot path contains NUL bytes: {}",
+                            relative_path.display()
+                        );
+                    }
+                }
+                joined.push(part);
+            }
+            Component::RootDir
+            | Component::Prefix(_)
+            | Component::ParentDir
+            | Component::CurDir => {
+                bail!(
+                    "Snapshot path escapes the target root: {}",
+                    relative_path.display()
+                );
+            }
+        }
+    }
+    if joined.as_os_str().is_empty() {
+        bail!("Snapshot path is empty");
+    }
+    Ok(joined)
+}
+
+fn open_or_init_snapshot_repo(path: &Path) -> Result<gix::Repository> {
     if path.exists() {
         if let Ok(repo) = gix::open(path) {
             return Ok(repo);
@@ -400,16 +766,12 @@ fn ensure_store_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn open_snapshot_repo(path: &Path) -> Result<Repository> {
+fn open_snapshot_repo(path: &Path) -> Result<gix::Repository> {
     gix::open(path).with_context(|| format!("Failed to open snapshot store {}", path.display()))
 }
 
-fn warn_if_store_not_ignored(
-    repo: &Repository,
-    config: &AgtConfig,
-    store_path: &Path,
-) -> Result<()> {
-    let Some(work_dir) = repo.work_dir() else {
+fn warn_if_store_not_ignored(work_dir: &Path, config: &AgtConfig, store_path: &Path) -> Result<()> {
+    let Ok(repo) = gix::open(work_dir) else {
         return Ok(());
     };
     let work_dir = work_dir
@@ -512,13 +874,14 @@ fn ignore_entry_for(path: &Path) -> String {
 }
 
 fn capture_records(
-    repo: &Repository,
+    repo: &gix::Repository,
     target_root: &Path,
     store_path: &Path,
+    ignore_rules: Option<&SnapshotIgnoreRules>,
     write_blobs: bool,
-) -> Result<Vec<SnapshotRecord>> {
+) -> Result<SnapshotCapture> {
     let store_for_walk = store_path.to_path_buf();
-    let mut records = Vec::new();
+    let mut capture = SnapshotCapture::default();
 
     for entry in jwalk::WalkDir::new(target_root)
         .skip_hidden(false)
@@ -534,10 +897,6 @@ fn capture_records(
         .into_iter()
         .filter_map(std::result::Result::ok)
     {
-        if entry.file_type().is_dir() {
-            continue;
-        }
-
         let path = entry.path();
         if path.starts_with(store_path) {
             continue;
@@ -547,21 +906,32 @@ fn capture_records(
         let rel_path = path
             .strip_prefix(target_root)
             .with_context(|| format!("{} is outside {}", path.display(), target_root.display()))?;
-        records.push(build_record(
-            repo,
-            target_root,
-            rel_path,
-            &path,
-            &metadata,
-            write_blobs,
-        )?);
+        if ignore_rules
+            .and_then(|rules| rules.match_relative_path(rel_path, metadata.file_type().is_dir()))
+            .is_some_and(|match_| match_.ignored)
+        {
+            if !entry.file_type().is_dir() {
+                capture.ignored_file_count += 1;
+            }
+            continue;
+        }
+        if !entry.file_type().is_dir() {
+            capture.records.push(build_record(
+                repo,
+                target_root,
+                rel_path,
+                &path,
+                &metadata,
+                write_blobs,
+            )?);
+        }
     }
 
-    Ok(records)
+    Ok(capture)
 }
 
 fn build_record(
-    repo: &Repository,
+    repo: &gix::Repository,
     target_root: &Path,
     rel_path: &Path,
     abs_path: &Path,
@@ -616,8 +986,167 @@ fn build_record(
     })
 }
 
+fn load_snapshot_ignore_rules(target_root: &Path) -> Result<Option<SnapshotIgnoreRules>> {
+    let Some(repo_root) = discover_repo_root(target_root)? else {
+        return Ok(None);
+    };
+    if !target_root.starts_with(&repo_root) {
+        return Ok(None);
+    }
+
+    let source_path = repo_root.join(SNAPSHOT_IGNORE_FILE);
+    if !source_path.is_file() {
+        return Ok(None);
+    }
+
+    let bytes = fs::read(&source_path)
+        .with_context(|| format!("Failed to read {}", source_path.display()))?;
+    let mut search = gix::ignore::Search::default();
+    search.add_patterns_buffer(&bytes, source_path.clone(), Some(repo_root.as_path()));
+
+    let case = if gix::fs::Capabilities::probe(repo_root.as_path()).ignore_case {
+        gix::glob::pattern::Case::Fold
+    } else {
+        gix::glob::pattern::Case::Sensitive
+    };
+
+    Ok(Some(SnapshotIgnoreRules {
+        repo_root,
+        source_path,
+        search,
+        case,
+    }))
+}
+
+fn collect_ignored_paths(
+    target_root: &Path,
+    store_path: &Path,
+    ignore_rules: Option<&SnapshotIgnoreRules>,
+) -> Result<Vec<String>> {
+    let Some(ignore_rules) = ignore_rules else {
+        return Ok(Vec::new());
+    };
+
+    let mut ignored = BTreeSet::new();
+    let store_for_walk = store_path.to_path_buf();
+    for entry in jwalk::WalkDir::new(target_root)
+        .skip_hidden(false)
+        .process_read_dir(move |_depth, path, _state, children| {
+            children.retain(|entry| {
+                entry.as_ref().map_or(true, |dir_entry| {
+                    dir_entry.file_name != OsStr::new(".git")
+                        && dir_entry.file_name != OsStr::new(DEFAULT_STORE_DIR)
+                        && path.join(&dir_entry.file_name) != store_for_walk
+                })
+            });
+        })
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        let path = entry.path();
+        if path.starts_with(store_path) {
+            continue;
+        }
+        let rel_path = path
+            .strip_prefix(target_root)
+            .with_context(|| format!("{} is outside {}", path.display(), target_root.display()))?;
+        let is_dir = entry.file_type().is_dir();
+        if ignore_rules
+            .match_relative_path(rel_path, is_dir)
+            .is_some_and(|match_| match_.ignored)
+        {
+            ignored.insert(normalize_rel_path(rel_path));
+        }
+    }
+
+    Ok(ignored.into_iter().collect())
+}
+
+impl SnapshotIgnoreRules {
+    fn match_relative_path(
+        &self,
+        relative_path: &Path,
+        is_dir: bool,
+    ) -> Option<SnapshotIgnoreMatch> {
+        let direct = self.match_bstr(
+            normalize_rel_path(relative_path).as_bytes().as_bstr(),
+            Some(is_dir),
+        );
+        if let Some(ancestor) = self.match_ignored_ancestor(relative_path) {
+            return Some(ancestor);
+        }
+        direct
+    }
+
+    fn match_for_input(&self, input: &str, current_dir: &Path) -> Option<SnapshotIgnoreMatch> {
+        let path = Path::new(input);
+        let candidate = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            current_dir.join(path)
+        };
+        let canonical = candidate.canonicalize().unwrap_or(candidate);
+        if !canonical.starts_with(&self.repo_root) {
+            return None;
+        }
+        let rel = canonical.strip_prefix(&self.repo_root).ok()?;
+        let is_dir = fs::symlink_metadata(&canonical)
+            .map(|meta| meta.file_type().is_dir())
+            .ok()
+            .unwrap_or(false);
+        self.match_relative_path(rel, is_dir)
+    }
+
+    fn match_ignored_ancestor(&self, relative_path: &Path) -> Option<SnapshotIgnoreMatch> {
+        let mut best: Option<SnapshotIgnoreMatch> = None;
+        for ancestor in relative_path.ancestors().skip(1) {
+            if ancestor.as_os_str().is_empty() {
+                continue;
+            }
+            let candidate = self.match_bstr(
+                normalize_rel_path(ancestor).as_bytes().as_bstr(),
+                Some(true),
+            );
+            if let Some(candidate) = candidate.filter(|match_| match_.ignored) {
+                if best
+                    .as_ref()
+                    .is_none_or(|current| candidate.line_number >= current.line_number)
+                {
+                    best = Some(candidate);
+                }
+            }
+        }
+        best
+    }
+
+    fn match_bstr(&self, relative: &BStr, is_dir: Option<bool>) -> Option<SnapshotIgnoreMatch> {
+        let match_ = self
+            .search
+            .pattern_matching_relative_path(relative, is_dir, self.case)?;
+        Some(SnapshotIgnoreMatch {
+            ignored: !match_.pattern.is_negative(),
+            source: match_
+                .source
+                .map(|path| {
+                    path.strip_prefix(&self.repo_root)
+                        .map(normalize_rel_path)
+                        .unwrap_or_else(|_| normalize_path(path))
+                })
+                .unwrap_or_else(|| {
+                    normalize_rel_path(
+                        self.source_path
+                            .strip_prefix(&self.repo_root)
+                            .unwrap_or(&self.source_path),
+                    )
+                }),
+            line_number: match_.sequence_number,
+            pattern: match_.pattern.to_string(),
+        })
+    }
+}
+
 fn write_snapshot_commit(
-    repo: &Repository,
+    repo: &gix::Repository,
     config: &AgtConfig,
     manifest: &SnapshotManifest,
     message: &str,
@@ -650,7 +1179,7 @@ fn write_snapshot_commit(
         .detach())
 }
 
-fn next_tag_name(repo: &Repository, created_at_ns: u128) -> Result<String> {
+fn next_tag_name(repo: &gix::Repository, created_at_ns: u128) -> Result<String> {
     let mut candidate = created_at_ns;
     loop {
         let name = format!("{candidate:020}");
@@ -662,7 +1191,7 @@ fn next_tag_name(repo: &Repository, created_at_ns: u128) -> Result<String> {
     }
 }
 
-fn latest_snapshot_tag(repo: &Repository) -> Result<Option<String>> {
+fn latest_snapshot_tag(repo: &gix::Repository) -> Result<Option<String>> {
     let mut latest = None;
     for reference in repo.references()?.tags()? {
         let reference = reference.map_err(|err| anyhow::anyhow!(err.to_string()))?;
@@ -680,7 +1209,7 @@ fn latest_snapshot_tag(repo: &Repository) -> Result<Option<String>> {
     Ok(latest)
 }
 
-fn load_manifest_for_tag(repo: &Repository, tag: &str) -> Result<SnapshotManifest> {
+fn load_manifest_for_tag(repo: &gix::Repository, tag: &str) -> Result<SnapshotManifest> {
     let ref_name = format!("refs/tags/{tag}");
     let mut tag_ref = repo.find_reference(ref_name.as_str())?;
     let commit = tag_ref.peel_to_commit()?;
@@ -748,10 +1277,11 @@ fn emit_diff(diff: &SnapshotDiff) {
 }
 
 fn has_changes_against_manifest(
-    repo: &Repository,
+    repo: &gix::Repository,
     manifest: &SnapshotManifest,
     target_root: &Path,
     store_path: &Path,
+    ignore_rules: Option<&SnapshotIgnoreRules>,
 ) -> Result<bool> {
     let mut expected: HashMap<String, &SnapshotRecord> = manifest
         .records
@@ -782,11 +1312,19 @@ fn has_changes_against_manifest(
             continue;
         }
 
-        let rel_path = normalize_rel_path(path.strip_prefix(target_root)?);
+        let metadata = fs::symlink_metadata(&path)?;
+        let rel_path = path.strip_prefix(target_root)?;
+        if ignore_rules
+            .and_then(|rules| rules.match_relative_path(rel_path, metadata.file_type().is_dir()))
+            .is_some_and(|match_| match_.ignored)
+        {
+            continue;
+        }
+
+        let rel_path = normalize_rel_path(rel_path);
         let Some(expected_record) = expected.remove(&rel_path) else {
             return Ok(true);
         };
-        let metadata = fs::symlink_metadata(&path)?;
         let current = build_record(
             repo,
             target_root,
@@ -803,11 +1341,18 @@ fn has_changes_against_manifest(
     Ok(!expected.is_empty())
 }
 
-fn ensure_latest_snapshot_is_clean_backup(repo: &Repository, store_path: &Path) -> Result<()> {
+fn ensure_latest_snapshot_is_clean_backup(repo: &gix::Repository, store_path: &Path) -> Result<()> {
     let latest_tag = latest_snapshot_tag(repo)?.context("No snapshots found in store")?;
     let manifest = load_manifest_for_tag(repo, &latest_tag)?;
     let target_root = PathBuf::from(&manifest.target_root);
-    if has_changes_against_manifest(repo, &manifest, &target_root, store_path)? {
+    let ignore_rules = load_snapshot_ignore_rules(&target_root)?;
+    if has_changes_against_manifest(
+        repo,
+        &manifest,
+        &target_root,
+        store_path,
+        ignore_rules.as_ref(),
+    )? {
         bail!(
             "Full restore requires the latest snapshot ({latest_tag}) to match the current filesystem; run `agt snapshot save` first"
         );
@@ -855,7 +1400,7 @@ fn remove_paths_not_in_snapshot(
 }
 
 fn restore_tree_to_disk(
-    repo: &Repository,
+    repo: &gix::Repository,
     tree_id: gix::ObjectId,
     prefix: &Path,
     disk_root: &Path,
@@ -879,13 +1424,13 @@ fn restore_tree_to_disk(
 }
 
 fn restore_entry_to_disk(
-    repo: &Repository,
+    repo: &gix::Repository,
     object_id: gix::ObjectId,
     kind: EntryKind,
     relative_path: &Path,
     disk_root: &Path,
 ) -> Result<()> {
-    let disk_path = disk_root.join(relative_path);
+    let disk_path = contained_join(disk_root, relative_path.as_os_str())?;
     match kind {
         EntryKind::Tree => {
             fs::create_dir_all(&disk_path)?;
@@ -926,7 +1471,7 @@ fn restore_entry_to_disk(
 }
 
 fn collect_tree_paths(
-    repo: &Repository,
+    repo: &gix::Repository,
     tree_id: gix::ObjectId,
     prefix: PathBuf,
     out: &mut HashSet<PathBuf>,
@@ -944,7 +1489,7 @@ fn collect_tree_paths(
 }
 
 fn collect_entry_paths(
-    repo: &Repository,
+    repo: &gix::Repository,
     object_id: gix::ObjectId,
     prefix: &Path,
     out: &mut HashSet<PathBuf>,
@@ -1150,7 +1695,12 @@ impl SnapshotManifest {
         Ok(out)
     }
 
-    fn decode(bytes: &[u8]) -> Result<Self> {
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        // Smallest possible encoded record: kind(1) + path length prefix(4)
+        // + object id length prefix(4) + file_id flag(1) + parent_file_id
+        // flag(1) + size(8) + create/modified/change flags(3)
+        // + mode/uid/gid/flags flags(4).
+        const MIN_ENCODED_RECORD_SIZE: u64 = 26;
         let mut cursor = Cursor::new(bytes);
         let mut magic = [0_u8; 8];
         cursor.read_exact(&mut magic)?;
@@ -1166,6 +1716,15 @@ impl SnapshotManifest {
         let created_at_ns = read_u128(&mut cursor)?;
         let target_root = read_string(&mut cursor)?;
         let record_count = read_u32(&mut cursor)?;
+
+        let remaining = bytes.len().saturating_sub(cursor.position() as usize);
+        let max_records = remaining as u64 / MIN_ENCODED_RECORD_SIZE;
+        if u64::from(record_count) > max_records {
+            bail!(
+                "Snapshot manifest record count {record_count} exceeds remaining input size ({remaining} bytes)"
+            );
+        }
+
         let mut records = Vec::with_capacity(record_count as usize);
 
         for _ in 0..record_count {
@@ -1186,6 +1745,14 @@ impl SnapshotManifest {
                 gid: read_opt_u32(&mut cursor)?,
                 flags: read_opt_u32(&mut cursor)?,
             });
+        }
+
+        let consumed = cursor.position();
+        if consumed != bytes.len() as u64 {
+            bail!(
+                "Snapshot manifest has {} trailing bytes",
+                bytes.len() - consumed as usize
+            );
         }
 
         Ok(Self {
@@ -1264,6 +1831,13 @@ fn write_opt_i128(out: &mut Vec<u8>, value: Option<i128>) {
 
 fn read_string(cursor: &mut Cursor<&[u8]>) -> Result<String> {
     let len = read_u32(cursor)? as usize;
+    let remaining = cursor
+        .get_ref()
+        .len()
+        .saturating_sub(cursor.position() as usize);
+    if len > remaining {
+        bail!("Snapshot manifest string length {len} exceeds remaining input ({remaining} bytes)");
+    }
     let mut buf = vec![0_u8; len];
     cursor.read_exact(&mut buf)?;
     String::from_utf8(buf).context("Snapshot manifest contained invalid UTF-8")
@@ -1331,7 +1905,7 @@ fn path_exists(path: &Path) -> bool {
 }
 
 fn restore_would_clobber(
-    repo: &Repository,
+    repo: &gix::Repository,
     object_id: gix::ObjectId,
     kind: EntryKind,
     relative_path: &Path,
@@ -1365,12 +1939,13 @@ fn confirm_overwrite(path: &Path) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{RecordKind, SnapshotManifest, SnapshotRecord};
+    use super::{contained_join, RecordKind, SnapshotManifest, SnapshotRecord};
     use anyhow::Result;
+    use std::ffi::OsStr;
+    use std::path::{Path, PathBuf};
 
-    #[test]
-    fn manifest_roundtrip_preserves_records() -> Result<()> {
-        let manifest = SnapshotManifest {
+    fn sample_manifest() -> SnapshotManifest {
+        SnapshotManifest {
             target_root: "/tmp/example".to_string(),
             created_at_ns: 42,
             records: vec![SnapshotRecord {
@@ -1388,11 +1963,91 @@ mod tests {
                 gid: Some(20),
                 flags: Some(7),
             }],
-        };
+        }
+    }
+
+    #[test]
+    fn manifest_roundtrip_preserves_records() -> Result<()> {
+        let manifest = sample_manifest();
 
         let encoded = manifest.encode()?;
         let decoded = SnapshotManifest::decode(&encoded)?;
         assert_eq!(decoded, manifest);
         Ok(())
+    }
+
+    #[test]
+    fn decode_rejects_absurd_record_count() -> Result<()> {
+        let manifest = sample_manifest();
+        let mut encoded = manifest.encode()?;
+        let record_count_offset = 8 + 4 + 16 + 4 + manifest.target_root.len();
+        encoded[record_count_offset..record_count_offset + 4]
+            .copy_from_slice(&u32::MAX.to_le_bytes());
+
+        let err = SnapshotManifest::decode(&encoded).expect_err("record count must be rejected");
+        assert!(err.to_string().contains("record count"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn decode_rejects_truncated_manifest() -> Result<()> {
+        let encoded = sample_manifest().encode()?;
+        for len in 0..encoded.len() {
+            assert!(
+                SnapshotManifest::decode(&encoded[..len]).is_err(),
+                "truncated manifest of {len} bytes must not decode"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn decode_rejects_trailing_bytes() -> Result<()> {
+        let mut encoded = sample_manifest().encode()?;
+        encoded.push(0);
+
+        let err = SnapshotManifest::decode(&encoded).expect_err("trailing bytes must be rejected");
+        assert!(err.to_string().contains("trailing"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn decode_rejects_oversized_string_length() -> Result<()> {
+        let mut encoded = sample_manifest().encode()?;
+        // target_root string length field starts after magic(8) + version(4)
+        // + created_at_ns(16).
+        encoded[28..32].copy_from_slice(&u32::MAX.to_le_bytes());
+
+        let err = SnapshotManifest::decode(&encoded).expect_err("string length must be rejected");
+        assert!(err.to_string().contains("string length"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn contained_join_accepts_relative_paths() {
+        let root = Path::new("/tmp/target");
+        assert_eq!(
+            contained_join(root, OsStr::new("a/b")).unwrap(),
+            PathBuf::from("/tmp/target/a/b")
+        );
+        assert_eq!(
+            contained_join(root, OsStr::new("file.txt")).unwrap(),
+            PathBuf::from("/tmp/target/file.txt")
+        );
+    }
+
+    #[test]
+    fn contained_join_rejects_escape_attempts() {
+        let root = Path::new("/tmp/target");
+        // Interior `.` components are normalized away by `Path::components`
+        // and can never escape, so they are accepted implicitly.
+        for attempt in ["../x", "/abs", "a/../../b", ".", ""] {
+            assert!(
+                contained_join(root, OsStr::new(attempt)).is_err(),
+                "{attempt} must be rejected"
+            );
+        }
+        #[cfg(unix)]
+        assert!(contained_join(root, OsStr::new("a\0b")).is_err());
     }
 }

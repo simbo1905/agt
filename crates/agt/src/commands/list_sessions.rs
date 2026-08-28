@@ -1,4 +1,4 @@
-use crate::config::AgtConfig;
+use agt_core::config::AgtConfig;
 use anyhow::Result;
 use gix::Repository;
 use serde::Deserialize;

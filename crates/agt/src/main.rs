@@ -1,18 +1,18 @@
 use crate::logging::debug_log;
+use agt_core::config::AgtConfig;
+use agt_core::snapshot;
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::Path;
 
 mod cli;
 mod commands;
-mod config;
 mod filter;
 mod gix_cli;
 mod isolation;
 mod logging;
 mod path_util;
 mod scanner;
-mod snapshot;
 
 pub use cli::*;
 
@@ -55,19 +55,22 @@ fn main() -> Result<()> {
 
     // Handle init command before discovering repo (init doesn't need existing repo)
     if let Some(Commands::Clone { remote_url, path }) = cli.command.clone() {
-        let config = config::AgtConfig::load_for_init();
+        let config = AgtConfig::load_for_init();
         return commands::clone::run(&remote_url, path.as_deref(), &config);
     }
 
+    // Handle snapshot commands before discovering repo (snapshot save/status/list/
+    // restore/diff/check-ignore operate on a --target that need not be inside any repo;
+    // host-repo discovery for the store warning happens inside agt-core).
+    if let Some(Commands::Snapshot(snapshot_cmd)) = cli.command.clone() {
+        return run_snapshot(snapshot_cmd);
+    }
+
     // Load configuration (from ~/.agtconfig and .agt/config)
-    let config = config::AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
+    let config = AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
 
     // Discover repo
     let repo = gix::discover(".").with_context(|| "Failed to discover Git repository")?;
-
-    if let Some(Commands::Snapshot(snapshot_cmd)) = cli.command.clone() {
-        return commands::snapshot::run(&repo, snapshot_cmd, &config);
-    }
 
     // Determine if filtering should be disabled
     let disable_filter = cli.disable_agt || std::env::var("AGT_DISABLE_FILTER").is_ok();
@@ -76,6 +79,7 @@ fn main() -> Result<()> {
     match cli.command {
         Some(Commands::Setup { .. }) => unreachable!(),
         Some(Commands::Clone { .. }) => unreachable!(), // handled above
+        Some(Commands::Snapshot(_)) => unreachable!(),  // handled above
         Some(Commands::Session(session_cmd)) => commands::session::run(&repo, session_cmd, &config),
         Some(Commands::Autocommit {
             session_id,
@@ -94,7 +98,6 @@ fn main() -> Result<()> {
                 &config,
             )
         }
-        Some(Commands::Snapshot(_)) => unreachable!(),
         Some(Commands::Status) => commands::status::run(&repo, &config),
         None => {
             if cli.args.is_empty() {
@@ -106,6 +109,45 @@ fn main() -> Result<()> {
                 commands::passthrough::run(&cli.args, is_git_mode, disable_filter, &config, &repo)
             }
         }
+    }
+}
+
+fn run_snapshot(command: cli::SnapshotCommands) -> Result<()> {
+    use cli::SnapshotCommands;
+
+    match command {
+        SnapshotCommands::Save {
+            target,
+            store,
+            message,
+        } => {
+            let config = AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
+            snapshot::save(&config, &target, store.as_deref(), message.as_deref())
+        }
+        SnapshotCommands::Diff {
+            before,
+            after,
+            store,
+        } => snapshot::check(&before, &after, store.as_deref()),
+        SnapshotCommands::Status {
+            store,
+            ignored,
+            quiet,
+        } => snapshot::status(store.as_deref(), ignored, quiet),
+        SnapshotCommands::CheckIgnore {
+            verbose,
+            non_matching,
+            nul,
+            stdin,
+            paths,
+        } => snapshot::check_ignore_flags(verbose, non_matching, nul, stdin, &paths),
+        SnapshotCommands::List { store, quiet } => snapshot::list(store.as_deref(), quiet),
+        SnapshotCommands::Restore {
+            snapshot: snapshot_name,
+            target,
+            path,
+            store,
+        } => snapshot::restore(&snapshot_name, &target, &path, store.as_deref()),
     }
 }
 
@@ -153,7 +195,7 @@ fn run_git_mode() -> Result<()> {
 
     // Load configuration (from ~/.agtconfig and .agt/config)
     debug_log("run_git_mode: loading config");
-    let config = config::AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
+    let config = AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
 
     debug_log("run_git_mode: discovering repo");
     let repo = gix::discover(".").with_context(|| "Failed to discover Git repository")?;

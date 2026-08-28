@@ -7,6 +7,7 @@ license = "MIT"
 description = "Agent Git Tool for AI agent session management"
 
 [dependencies]
+agt-core = { path = "../agt-core" }
 gix = { workspace = true }
 gix-object = { workspace = true }
 gix-path = { workspace = true }
