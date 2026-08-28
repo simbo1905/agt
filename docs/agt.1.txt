@@ -435,7 +435,14 @@ COMMANDS
               • Tag listings hide tags matching agt.branchPrefix
               • Log output hides commits by agt.agentEmail
 
-       The filtering is line-based on stdout. Stderr is passed through unmodified.
+        The filtering is line-based on stdout. Stderr is passed through unmodified.
+
+        Git helper delegation: when git mode receives a subcommand that stock
+        git does not know, the real git binary searches PATH for an executable
+        named git-<name> and runs it (for example, `git rabbit` runs
+        `git-rabbit`). agt passes such subcommands through to the real git
+        unchanged, so helpers found on PATH run exactly as with stock git;
+        see EXTERNAL HELPER COMMANDS below for a worked example.
 
    EXTERNAL HELPER COMMANDS (git-xxx)
 
@@ -511,10 +518,15 @@ STANDALONE AGT-SNAPSHOT BINARY
                agt setup.
 
                The full agt tool is unchanged: agt snapshot ... and agt setup
-               continue to work exactly as documented in this manual. Running
-               agt snapshot ... so that it finds and executes the standalone
-               agt-snapshot binary from PATH is planned for a later release
-               and is not behaviour of the current version.
+                continue to work exactly as documented in this manual. Since
+                0.3.0, agt snapshot ... and agt setup are pass-throughs to the
+                standalone agt-snapshot binary: agt locates agt-snapshot on
+                PATH and execs it with the original arguments. Because the
+                helper is exec'd (not spawned as a filtered subprocess), the
+                process is replaced and the exit code is exactly the
+                agt-snapshot exit code. If no agt-snapshot binary is found on
+                PATH, agt reports the error in git's "not a git command" style
+                and exits with a non-zero status.
 
 OPTIONS
    GLOBAL OPTIONS
@@ -766,4 +778,4 @@ BUGS
 AUTHOR
        Written for AI agent session management and immutable filesystem workflows.
 
-AGT 0.2.2                         January 2026                          AGT(1)
+AGT 0.3.0                         August 2026                          AGT(1)
