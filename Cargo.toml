@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/agt", "crates/agt-core", "crates/agt-snapshot", "crates/agt-worktree"]
+exclude = ["fuzz"]
 resolver = "2"
 
 [workspace.package]

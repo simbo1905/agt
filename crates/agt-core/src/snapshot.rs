@@ -21,14 +21,14 @@ const SNAPSHOT_LIST_WIDTH: usize = 80;
 const SNAPSHOT_IGNORE_FILE: &str = ".agt-snapshot-ignore";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct SnapshotManifest {
+pub struct SnapshotManifest {
     target_root: String,
     created_at_ns: u128,
     records: Vec<SnapshotRecord>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct SnapshotRecord {
+pub struct SnapshotRecord {
     path: String,
     kind: RecordKind,
     object_id: String,
@@ -45,7 +45,7 @@ struct SnapshotRecord {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RecordKind {
+pub enum RecordKind {
     File,
     Executable,
     Symlink,
@@ -161,7 +161,7 @@ pub fn setup(store: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-fn is_timestamp_tag(tag: &str) -> Option<u64> {
+pub fn is_timestamp_tag(tag: &str) -> Option<u64> {
     let digits: String = tag.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.len() >= 17 {
         digits.parse::<u64>().ok()
@@ -689,7 +689,7 @@ fn absolutize(path: &Path, base: &Path) -> Result<PathBuf> {
 /// component that could escape the target (absolute paths, `..`, `.`, Windows
 /// prefixes, NUL bytes). All restore-time joins (writes AND the deletion set)
 /// must go through this function.
-fn contained_join(root: &Path, relative: &OsStr) -> Result<PathBuf> {
+pub fn contained_join(root: &Path, relative: &OsStr) -> Result<PathBuf> {
     Ok(root.join(contained_relative(relative)?))
 }
 
@@ -1695,7 +1695,7 @@ impl SnapshotManifest {
         Ok(out)
     }
 
-    fn decode(bytes: &[u8]) -> Result<Self> {
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
         // Smallest possible encoded record: kind(1) + path length prefix(4)
         // + object id length prefix(4) + file_id flag(1) + parent_file_id
         // flag(1) + size(8) + create/modified/change flags(3)
