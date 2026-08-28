@@ -366,8 +366,10 @@ COMMANDS
               output even though the path is not ignored overall, mirroring the
               usability of `git check-ignore -v`.
 
-              With `-n`, agt also prints non-matching paths in verbose mode using
-              empty source, line, and pattern fields so scripts can distinguish
+              `-n` is only valid together with `-v`.
+
+              With `-v -n`, agt also prints non-matching paths using empty
+              source, line, and pattern fields so scripts can distinguish
               no-match from no-output.
 
               With `-z`, agt uses NUL separators for machine-readable output.

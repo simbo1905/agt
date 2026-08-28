@@ -28,6 +28,10 @@ pub fn run(repo: &Repository, command: SnapshotCommands, config: &AgtConfig) -> 
             stdin,
             paths,
         } => {
+            if non_matching && !verbose {
+                eprintln!("fatal: --non-matching is only valid with --verbose");
+                std::process::exit(128);
+            }
             let format = if verbose {
                 if non_matching {
                     snapshot::CheckIgnoreFormat::VerboseWithNonMatching

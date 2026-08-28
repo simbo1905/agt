@@ -702,6 +702,15 @@ fn test_snapshot_check_ignore_verbose_and_non_matching() -> Result<(), Box<dyn s
         .assert()
         .failure();
 
+    agt_cmd_with_git()?
+        .args(["snapshot", "check-ignore", "-n", "keep.txt"])
+        .current_dir(repo.worktree())
+        .assert()
+        .code(128)
+        .stderr(predicate::str::contains(
+            "fatal: --non-matching is only valid with --verbose",
+        ));
+
     Ok(())
 }
 

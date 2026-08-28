@@ -32,7 +32,9 @@ agt/
 ├── AGENTS.md           # Guidance for AI coding agents
 ├── mise.toml           # Tool version management
 ├── docs/
-│   └── agt.1.txt       # Man page for agt tool
+│   ├── agt.1.txt       # Man page for agt tool
+│   ├── DOC_STANDARDS.md
+│   └── RFC_RUST_OBJECT_ORIENTED_AGENTS.md
 ├── vendor/
 │   └── toybox/         # toybox submodule for chroot jails
 ├── crates/
@@ -68,6 +70,10 @@ Key commands:
 - `agt snapshot restore` - Restore all or part of a saved standalone snapshot
 
 See [docs/agt.1.txt](docs/agt.1.txt) for the complete man page.
+
+Design proposals:
+
+- [Rust Object-Oriented Agents with AssemblyScript Actions](docs/RFC_RUST_OBJECT_ORIENTED_AGENTS.md)
 
 ### Two Snapshot Modes
 
