@@ -3,6 +3,7 @@
 //! - git mode: unknown subcommands delegate to `git-<name>` helpers on PATH
 //!
 //! The delegation mechanism execs external scripts, so these tests are unix-only.
+#![cfg(unix)]
 
 use assert_cmd::Command as AgtCommand;
 use predicates::prelude::*;
