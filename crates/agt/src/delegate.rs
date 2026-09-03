@@ -2,7 +2,9 @@
 //! PATH and execute them, replacing this process on unix so stdio and exit
 //! codes propagate by construction.
 
-use anyhow::{Context, Result};
+#[cfg(unix)]
+use anyhow::Context;
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 /// Search `$PATH` for an executable named `program` and return its path.

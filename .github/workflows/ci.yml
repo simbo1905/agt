@@ -291,10 +291,18 @@ jobs:
     needs:
       - native-checks
       - debian-trixie
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: All required checks passed
+        if: ${{ needs.native-checks.result == 'success' && needs.debian-trixie.result == 'success' }}
         run: true
+      - name: Fail if any required check failed
+        if: ${{ needs.native-checks.result != 'success' || needs.debian-trixie.result != 'success' }}
+        run: |
+          echo "native-checks: ${{ needs.native-checks.result }}"
+          echo "debian-trixie: ${{ needs.debian-trixie.result }}"
+          exit 1
 
   publish-release:
     name: Publish Draft Release
