@@ -4,7 +4,9 @@
 //! CI-safe: it never touches the network. Port 1 on 127.0.0.1 refuses the
 //! connection immediately, so the clone fails fast at the transport layer.
 
+#[cfg(unix)]
 use assert_cmd::Command as AgtCommand;
+#[cfg(unix)]
 use tempfile::TempDir;
 
 #[cfg(unix)]

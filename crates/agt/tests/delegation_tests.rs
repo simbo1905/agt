@@ -3,6 +3,7 @@
 //! - git mode: unknown subcommands delegate to `git-<name>` helpers on PATH
 //!
 //! The delegation mechanism execs external scripts, so these tests are unix-only.
+#![cfg(unix)]
 
 use assert_cmd::Command as AgtCommand;
 use predicates::prelude::*;
@@ -211,10 +212,14 @@ fn test_git_mode_unknown_subcommand_without_helper_falls_back_to_host_git(
     let empty_path = TempDir::new()?;
 
     // Nothing on PATH: the helper lookup misses and the host-git passthrough
-    // fails exactly as before the delegation existed.
+    // fails exactly as before the delegation existed. Redirect AGT_LOG_PATH to
+    // a temp file so the intentionally-failed delegation does not pollute a
+    // CI-checked log inherited through the environment (see integration_tests).
+    let log_path = tmp.path().join("agt-fallback.log");
     AgtCommand::new(&fake_git)
         .env("PATH", empty_path.path())
         .env("AGT_GIT_PATH", find_real_git()?)
+        .env("AGT_LOG_PATH", &log_path)
         .current_dir(&repo_dir)
         .args(["xyz"])
         .assert()
