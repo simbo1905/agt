@@ -96,6 +96,8 @@ The snapshot subsystem also ships as a standalone binary, `agt-snapshot`. Instal
 
 The standalone binary has identical behaviour, options, and exit codes to the corresponding `agt snapshot ...` commands (`agt-snapshot setup` mirrors `agt setup`). Since 0.3.0, `agt snapshot ...` and `agt setup` are pass-throughs: `agt` locates the standalone `agt-snapshot` binary on your PATH and execs it with the original arguments, so the exit code is exactly the `agt-snapshot` exit code. If no `agt-snapshot` binary is found on PATH, `agt` reports a git-style error and exits non-zero. See [docs/agt.1.txt](docs/agt.1.txt) for details.
 
+`agt-snapshot save` (and therefore `agt snapshot save`) shows a progress line on stderr only when stderr is an interactive terminal; pipes, scripts, and agent harnesses get unchanged, machine-readable output. Quiet flags suppress progress, `AGT_NO_PORCELINE` forces it off even on a TTY, and `-v` adds an accurate percentage (at the cost of a metadata pre-walk).
+
 ## Configuration
 
 AGT uses its own configuration files, separate from git's:

@@ -1,4 +1,5 @@
 use crate::config::AgtConfig;
+use crate::progress::{Progress, ProgressGating};
 use anyhow::{bail, Context, Result};
 use gix::bstr::BStr;
 use gix::bstr::ByteSlice;
@@ -95,6 +96,7 @@ pub fn save(
     target: &Path,
     store: Option<&Path>,
     message: Option<&str>,
+    verbose: bool,
 ) -> Result<()> {
     ensure_supported_platform()?;
     let current_dir = std::env::current_dir()?;
@@ -108,6 +110,16 @@ pub fn save(
     let snapshot_repo = open_or_init_snapshot_repo(&store_path)?;
     let ignore_rules = load_snapshot_ignore_rules(&target_root)?;
 
+    // Progress is decided once: TTY-gated, quiet-suppressed, AGT_NO_PORCELINE
+    // forced off. `-v` upgrades the TTY line to an accurate percentage by
+    // paying for a metadata-only pre-walk; without it there is no extra walk.
+    let gating = ProgressGating::from_env(false, verbose);
+    let mut progress = Progress::new(gating);
+    if gating.accurate {
+        let (files, bytes) = prewalk_totals(&target_root, &store_path, ignore_rules.as_ref())?;
+        progress.set_totals(files, bytes);
+    }
+
     let created_at_ns = now_ns();
     let mut capture = capture_records(
         &snapshot_repo,
@@ -115,7 +127,9 @@ pub fn save(
         &store_path,
         ignore_rules.as_ref(),
         true,
+        &mut progress,
     )?;
+    progress.finish();
     capture
         .records
         .sort_by(|left, right| left.path.cmp(&right.path));
@@ -234,6 +248,7 @@ pub fn status(store: Option<&Path>, ignored: bool, quiet: u8) -> Result<()> {
             &store_path,
             ignore_rules.as_ref(),
             false,
+            &mut Progress::disabled(),
         )?
         .records,
     };
@@ -879,6 +894,7 @@ fn capture_records(
     store_path: &Path,
     ignore_rules: Option<&SnapshotIgnoreRules>,
     write_blobs: bool,
+    progress: &mut Progress,
 ) -> Result<SnapshotCapture> {
     let store_for_walk = store_path.to_path_buf();
     let mut capture = SnapshotCapture::default();
@@ -916,18 +932,62 @@ fn capture_records(
             continue;
         }
         if !entry.file_type().is_dir() {
-            capture.records.push(build_record(
-                repo,
-                target_root,
-                rel_path,
-                &path,
-                &metadata,
-                write_blobs,
-            )?);
+            let record = build_record(repo, target_root, rel_path, &path, &metadata, write_blobs)?;
+            progress.tick(record.size);
+            capture.records.push(record);
         }
     }
 
     Ok(capture)
+}
+
+/// Metadata-only pre-walk that counts the files (and bytes) a save would
+/// capture, so `-v` progress can show an accurate percentage. Mirrors the
+/// filtering of `capture_records` exactly.
+fn prewalk_totals(
+    target_root: &Path,
+    store_path: &Path,
+    ignore_rules: Option<&SnapshotIgnoreRules>,
+) -> Result<(u64, u64)> {
+    let store_for_walk = store_path.to_path_buf();
+    let mut files = 0_u64;
+    let mut bytes = 0_u64;
+
+    for entry in jwalk::WalkDir::new(target_root)
+        .skip_hidden(false)
+        .process_read_dir(move |_depth, path, _state, children| {
+            children.retain(|entry| {
+                entry.as_ref().map_or(true, |dir_entry| {
+                    dir_entry.file_name != OsStr::new(".git")
+                        && dir_entry.file_name != OsStr::new(DEFAULT_STORE_DIR)
+                        && path.join(&dir_entry.file_name) != store_for_walk
+                })
+            });
+        })
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        if entry.file_type().is_dir() {
+            continue;
+        }
+        let path = entry.path();
+        if path.starts_with(store_path) {
+            continue;
+        }
+        let rel_path = path
+            .strip_prefix(target_root)
+            .with_context(|| format!("{} is outside {}", path.display(), target_root.display()))?;
+        if ignore_rules
+            .and_then(|rules| rules.match_relative_path(rel_path, entry.file_type().is_dir()))
+            .is_some_and(|match_| match_.ignored)
+        {
+            continue;
+        }
+        files += 1;
+        bytes += fs::symlink_metadata(&path)?.len();
+    }
+
+    Ok((files, bytes))
 }
 
 fn build_record(
