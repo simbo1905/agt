@@ -77,6 +77,15 @@ pub enum SessionCommands {
         session_id: Option<String>,
     },
 
+    /// Merge a session's shadow branch into the current user branch
+    Merge {
+        /// Session identifier to merge
+        session_id: String,
+        /// Perform pre-flight checks and report the outcome without touching the working tree
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Remove a session
     Remove {
         #[arg(long)]

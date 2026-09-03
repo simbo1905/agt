@@ -174,8 +174,43 @@ COMMANDS
               Only user branches are exported.
 
               Options:
-                  -C <path>             Repository path (default: current dir)
-                  --session-id <id>     Session to export (default: detect from cwd)
+                   -C <path>             Repository path (default: current dir)
+                   --session-id <id>     Session to export (default: detect from cwd)
+
+       agt session merge <session-id> [-C <path>] [--dry-run]
+              Merge a session's shadow branch (agtsessions/<id>) into the
+              current user branch.
+
+              1. Verifies the session id is known and its shadow branch exists
+              2. Verifies the current worktree is clean (the same standard
+                 agt uses for session export; refuses when dirty)
+              3. Fast-forwards the user branch when possible; otherwise
+                 creates a real merge commit
+              4. Reports the merge commit sha, the session id, and a diff
+                 summary
+
+              The merge commit (when one is created) is authored with the
+              user's git identity, never the agent identity.
+
+              On merge conflict the merge is aborted cleanly, the working
+              tree is left untouched, and agt exits 1. The session still
+              holds the work on its shadow branch; resolve by merging
+              agtsessions/<id> into the user branch manually.
+
+              The shadow branch is retained after a successful merge. Delete
+              it explicitly with agt session remove --id <id>
+              --delete-branch.
+
+              Options:
+                   <session-id>          Session to merge (required)
+                   --dry-run             Perform all pre-flight checks and
+                                         report the outcome (fast-forward vs
+                                         merge commit; conflicts predicted via
+                                         git merge-tree) without changing the
+                                         working tree. Exits 0 when the merge
+                                         would succeed and 1 when it would
+                                         refuse or conflict.
+                   -C <path>             Repository path (default: current dir)
 
        agt session remove --id <id> [-C <path>] [--delete-branch]
               Remove an agent session and clean up its resources.
@@ -698,6 +733,12 @@ EXAMPLES
        Export session work to remote:
               $ agt session export --session-id agent-001
 
+       Merge agent session work back into the current branch:
+              $ agt session merge agent-001
+
+       Preview a session merge without touching the worktree:
+              $ agt session merge agent-001 --dry-run
+
        Fork a new session from an existing one (for parallel work):
               $ agt session fork --from agent-001 --id agent-002
 
@@ -795,4 +836,4 @@ BUGS
 AUTHOR
        Written for AI agent session management and immutable filesystem workflows.
 
-AGT 0.3.1                         September 2026                       AGT(1)
+AGT 0.4.0                         September 2026                       AGT(1)
