@@ -61,6 +61,7 @@ Key commands:
 - `agt clone <url>` - Clone remote repo into agt-managed structure
 - `agt session new [--id <id>]` - Create new agent session
 - `agt session export` - Push user branch to remote origin
+- `agt session merge <session-id>` - Merge a session's shadow branch into the current user branch (fast-forward when possible, otherwise a merge commit authored with your git identity; `--dry-run` previews the outcome)
 - `agt session remove --id <id>` - Remove a session
 - `agt autocommit --session-id <id>` - Capture session shadow history
 - `agt snapshot save` - Save a standalone filesystem snapshot into an isolated store, honouring `.agt-snapshot-ignore`
@@ -314,8 +315,6 @@ This gives full git compatibility while hiding agent implementation details from
 - Symlinks are stored as symlinks; targets are captured as-is (external symlinks may be broken when checked out elsewhere).
 
 ## Known Limitations
-
-- **Merging shadow branches back** - Not yet implemented. Use manual `git merge` to integrate agent work into user branches.
 
 - **Issue #18 compatibility note** - AGT metadata handling now normalizes Windows verbatim paths when writing linked-worktree metadata so legacy integration tests can run under Windows CI.
 

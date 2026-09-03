@@ -9,8 +9,6 @@ description = "Minimal worktree add/remove helper for agt"
 anyhow = { workspace = true }
 clap = { workspace = true }
 gix = { workspace = true }
-gix-index = "0.37"
-gix-worktree = "0.38"
 gix-worktree-state = "0.15"
 gix-features = "0.39"
 gix-fs = { workspace = true }

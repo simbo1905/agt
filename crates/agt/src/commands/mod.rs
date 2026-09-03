@@ -2,6 +2,7 @@ pub mod autocommit;
 pub mod clone;
 pub mod git_porcelain;
 pub mod list_sessions;
+pub mod merge_session;
 pub mod passthrough;
 pub mod prune_session;
 pub mod session;

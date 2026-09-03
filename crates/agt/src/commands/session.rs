@@ -39,6 +39,10 @@ pub fn run(repo: &Repository, command: SessionCommands, config: &AgtConfig) -> R
             create_session(repo, config, &session_id, Some(&from), "default")
         }
         SessionCommands::Export { session_id } => export_session(repo, config, session_id),
+        SessionCommands::Merge {
+            session_id,
+            dry_run,
+        } => super::merge_session::run(repo, &session_id, dry_run, config),
         SessionCommands::Remove { id, delete_branch } => {
             super::prune_session::run(repo, &id, delete_branch, config)
         }
