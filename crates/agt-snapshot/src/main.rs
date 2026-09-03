@@ -20,9 +20,16 @@ fn run(command: SnapshotCommands) -> Result<()> {
             target,
             store,
             message,
+            verbose,
         } => {
             let config = AgtConfig::load().with_context(|| "Failed to load AGT configuration")?;
-            snapshot::save(&config, &target, store.as_deref(), message.as_deref())
+            snapshot::save(
+                &config,
+                &target,
+                store.as_deref(),
+                message.as_deref(),
+                verbose,
+            )
         }
         SnapshotCommands::Diff {
             before,

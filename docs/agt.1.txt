@@ -272,10 +272,23 @@ COMMANDS
                not ignored by Git. `agt setup` can create the store and ensure the
                default or chosen in-repo store path is ignored before the first save.
 
-              Save output reports both the number of captured files and the number
-              of files skipped by snapshot ignore rules.
+               Save output reports both the number of captured files and the number
+               of files skipped by snapshot ignore rules.
 
-              The snapshot manifest records, at minimum:
+               Progress: when stderr is an interactive terminal, save renders a
+               single carriage-return-updated progress line (e.g. `snapshot: 42
+               files, 3.4 MiB`) so a human can follow the walk. When stderr is a
+               pipe, a file, or a non-interactive agent harness, no progress is
+               rendered and there is no pre-walk or per-file bookkeeping:
+               stdout stays byte-identical to the non-TTY contract. Any quiet
+               mode suppresses progress regardless of TTY state, and setting
+               AGT_NO_PORCELINE (to any non-empty value) forces progress off
+               even on a TTY. With -v on a TTY, save first performs a
+               metadata-only pre-walk and then renders an accurate percentage
+               (e.g. `snapshot: 42% (123/293 files, 456 MiB/1.1 GiB)`); -v never
+               renders a progress line on a non-TTY.
+
+               The snapshot manifest records, at minimum:
               • object_id
               • file_id
               • parent_file_id
@@ -284,10 +297,12 @@ COMMANDS
               • create, modify, and change timestamps where available
               • platform file flags where available
 
-              Options:
-                  --target <path>        Directory to snapshot (default: current dir)
-                  --store <path>         Snapshot store directory
-                  -m, --message <text>   Annotated tag message
+               Options:
+                   --target <path>        Directory to snapshot (default: current dir)
+                   --store <path>         Snapshot store directory
+                   -m, --message <text>   Annotated tag message
+                   -v, --verbose          Show progress with an accurate percentage
+                                          (TTY only; performs a metadata pre-walk)
 
        agt snapshot diff <snapshot-a> <snapshot-b> [--store <path>]
               Compare two saved standalone snapshots and report deleted, modified,
@@ -490,9 +505,11 @@ STANDALONE AGT-SNAPSHOT BINARY
                • agt-snapshot setup [--store <path>]
                       See agt setup.
 
-               • agt-snapshot save [--target <path>] [--store <path>]
-                 [-m <message>]
-                      See agt snapshot save.
+                • agt-snapshot save [--target <path>] [--store <path>]
+                  [-m <message>] [-v]
+                       See agt snapshot save. Progress is TTY-gated as
+                       documented there; AGT_NO_PORCELINE forces it off and
+                       quiet flags suppress it.
 
                • agt-snapshot diff <snapshot-a> <snapshot-b> [--store <path>]
                       See agt snapshot diff.
@@ -778,4 +795,4 @@ BUGS
 AUTHOR
        Written for AI agent session management and immutable filesystem workflows.
 
-AGT 0.3.0                         August 2026                          AGT(1)
+AGT 0.3.1                         September 2026                       AGT(1)

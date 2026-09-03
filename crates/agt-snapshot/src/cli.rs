@@ -39,6 +39,10 @@ pub enum SnapshotCommands {
         /// Message stored with the snapshot tag
         #[arg(short = 'm', long)]
         message: Option<String>,
+        /// Show progress with an accurate percentage (TTY only; enables a
+        /// metadata pre-walk before the snapshot walk)
+        #[arg(short = 'v', long)]
+        verbose: bool,
     },
 
     /// Compare two saved snapshots and report deleted, modified, and added paths
