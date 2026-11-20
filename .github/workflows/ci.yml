@@ -27,6 +27,7 @@ jobs:
   release-meta:
     name: Release Metadata
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       publish: ${{ steps.meta.outputs.publish }}
       release_kind: ${{ steps.meta.outputs.release_kind }}
@@ -93,6 +94,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: release-meta
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     env:
       AGT_BUILD_CHANNEL: ${{ needs.release-meta.outputs.release_kind == 'nightly' && 'nightly' || '' }}
       AGT_BUILD_DATE: ${{ needs.release-meta.outputs.build_date }}
@@ -220,6 +222,7 @@ jobs:
     name: Debian Trixie
     needs: release-meta
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       AGT_BUILD_CHANNEL: ${{ needs.release-meta.outputs.release_kind == 'nightly' && 'nightly' || '' }}
       AGT_BUILD_DATE: ${{ needs.release-meta.outputs.build_date }}
@@ -293,6 +296,7 @@ jobs:
       - debian-trixie
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: All required checks passed
         if: ${{ needs.native-checks.result == 'success' && needs.debian-trixie.result == 'success' }}
@@ -311,6 +315,7 @@ jobs:
       - checks-passed
     if: needs.release-meta.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
